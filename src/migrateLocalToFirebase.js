@@ -1,7 +1,12 @@
 import { createFirebaseStorage } from "./firebaseStorage.js";
 import { createLocalStorageAdapter } from "./localStorageAdapter.js";
 
-const LEDGER_KEYS = ["ledger-entries", "ledger-budgets"];
+const LEDGER_KEYS = [
+  "ledger-entries",
+  "ledger-budgets",
+  "ledger-recurring",
+  "ledger-category-rules",
+];
 
 export async function migrateLocalToFirebase(uid) {
   const firebaseStorage = createFirebaseStorage(uid);

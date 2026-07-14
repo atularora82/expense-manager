@@ -1,4 +1,12 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
+import { parseExcelFile } from "./excelImport.js";
+import {
+  lookupCategoryRule,
+  saveCategoryRule,
+  removeCategoryRule,
+} from "./categoryRules.js";
+import { processRecurringItems } from "./recurring.js";
+import { createBackup, downloadBackup, parseBackupFile } from "./backup.js";
 
 const CATEGORIES = [
   { id: "food", label: "Food & Dining", color: "#A93B3B" },
@@ -47,6 +55,13 @@ function monthLabel(ym) {
   return new Date(Number(y), Number(m) - 1, 1).toLocaleDateString("en-IN", {
     month: "long",
     year: "numeric",
+  });
+}
+
+function monthNameOnly(ym) {
+  const [y, m] = ym.split("-");
+  return new Date(Number(y), Number(m) - 1, 1).toLocaleDateString("en-IN", {
+    month: "long",
   });
 }
 
@@ -141,7 +156,18 @@ function detectCategory(lowerText, type) {
   return type === "income" ? "other_income" : "other";
 }
 
-function parseVoiceText(raw, type) {
+function resolveCategory(description, type, rules = {}) {
+  const fromRule = lookupCategoryRule(rules, description, type);
+  if (fromRule) return fromRule;
+  return detectCategory(description.toLowerCase(), type);
+}
+
+function weekdayFromDate(dateStr) {
+  const jsDow = new Date(dateStr + "T00:00:00").getDay();
+  return jsDow === 0 ? 7 : jsDow;
+}
+
+function parseVoiceText(raw, type, rules = {}) {
   const lower = raw.toLowerCase();
   const numMatch = lower.match(/(\d+(?:[.,]\d+)?)/);
   const amount = numMatch ? parseFloat(numMatch[1].replace(",", "")) : null;
@@ -156,7 +182,7 @@ function parseVoiceText(raw, type) {
   if (!desc) desc = raw.trim();
   desc = desc.charAt(0).toUpperCase() + desc.slice(1);
 
-  const category = detectCategory(lower, type);
+  const category = resolveCategory(desc, type, rules);
   return { amount, description: desc, category };
 }
 
@@ -175,15 +201,23 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
   const [budgetsLoaded, setBudgetsLoaded] = useState(false);
   const [budgetDrafts, setBudgetDrafts] = useState({});
 
+  const [recurring, setRecurring] = useState([]);
+  const [recurringLoaded, setRecurringLoaded] = useState(false);
+  const [categoryRules, setCategoryRules] = useState({});
+  const [rulesLoaded, setRulesLoaded] = useState(false);
+
   const [formType, setFormType] = useState("expense");
   const [amount, setAmount] = useState("");
   const [desc, setDesc] = useState("");
   const [category, setCategory] = useState(CATEGORIES[0].id);
   const [date, setDate] = useState(todayStr());
+  const [formRecurring, setFormRecurring] = useState(false);
+  const [formRecurringFreq, setFormRecurringFreq] = useState("monthly");
   const [formError, setFormError] = useState("");
   const [editingId, setEditingId] = useState(null);
 
   const [periodMode, setPeriodMode] = useState("month");
+  const [year, setYear] = useState(todayStr().slice(0, 4));
   const [month, setMonth] = useState(todayStr().slice(0, 7));
   const [weekAnchor, setWeekAnchor] = useState(todayStr());
 
@@ -194,6 +228,12 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
   const [isListening, setIsListening] = useState(false);
   const [voiceTranscript, setVoiceTranscript] = useState("");
   const [voiceNote, setVoiceNote] = useState("");
+  const [importNote, setImportNote] = useState("");
+  const [importPreview, setImportPreview] = useState(null);
+  const [backupNote, setBackupNote] = useState("");
+  const [showRecurring, setShowRecurring] = useState(false);
+  const importInputRef = useRef(null);
+  const backupInputRef = useRef(null);
   const recognitionRef = React.useRef(null);
   const voiceSupported =
     typeof window !== "undefined" &&
@@ -228,6 +268,30 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
         setBudgetsLoaded(true);
       }
     })();
+    (async () => {
+      try {
+        const res = await window.storage.get("ledger-recurring");
+        if (res && res.value) {
+          setRecurring(JSON.parse(res.value));
+        }
+      } catch (e) {
+        // no recurring set yet
+      } finally {
+        setRecurringLoaded(true);
+      }
+    })();
+    (async () => {
+      try {
+        const res = await window.storage.get("ledger-category-rules");
+        if (res && res.value) {
+          setCategoryRules(JSON.parse(res.value));
+        }
+      } catch (e) {
+        // no rules set yet
+      } finally {
+        setRulesLoaded(true);
+      }
+    })();
   }, []);
 
   useEffect(() => {
@@ -256,11 +320,56 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
     })();
   }, [budgets, budgetsLoaded]);
 
+  useEffect(() => {
+    if (!recurringLoaded) return;
+    (async () => {
+      try {
+        await window.storage.set("ledger-recurring", JSON.stringify(recurring));
+      } catch (e) {
+        // ignore
+      }
+    })();
+  }, [recurring, recurringLoaded]);
+
+  useEffect(() => {
+    if (!rulesLoaded) return;
+    (async () => {
+      try {
+        await window.storage.set(
+          "ledger-category-rules",
+          JSON.stringify(categoryRules)
+        );
+      } catch (e) {
+        // ignore
+      }
+    })();
+  }, [categoryRules, rulesLoaded]);
+
+  useEffect(() => {
+    if (!loaded || !recurringLoaded || recurring.length === 0) return;
+    const generated = processRecurringItems(recurring, entries, todayStr());
+    if (generated.length > 0) {
+      setEntries((prev) => [...generated, ...prev]);
+    }
+  }, [loaded, recurringLoaded, recurring.length]);
+
+  function learnCategoryRulesFromEntries(list) {
+    setCategoryRules((prev) => {
+      let next = prev;
+      for (const en of list) {
+        next = saveCategoryRule(next, en.description, en.type, en.category);
+      }
+      return next;
+    });
+  }
+
   function resetForm() {
     setAmount("");
     setDesc("");
     setCategory(catsForType(formType)[0].id);
     setDate(todayStr());
+    setFormRecurring(false);
+    setFormRecurringFreq("monthly");
     setEditingId(null);
     setFormError("");
   }
@@ -282,6 +391,11 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
       setFormError("Add a short description.");
       return;
     }
+    const trimmedDesc = desc.trim();
+    setCategoryRules((prev) =>
+      saveCategoryRule(prev, trimmedDesc, formType, category)
+    );
+
     if (editingId) {
       setEntries((prev) =>
         prev.map((en) =>
@@ -289,7 +403,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
             ? {
                 ...en,
                 amount: num,
-                description: desc.trim(),
+                description: trimmedDesc,
                 category,
                 date,
                 type: formType,
@@ -298,19 +412,57 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
         )
       );
     } else {
-      setEntries((prev) => [
-        {
+      const newEntry = {
+        id: uid(),
+        type: formType,
+        amount: num,
+        description: trimmedDesc,
+        category,
+        date,
+      };
+      setEntries((prev) => [newEntry, ...prev]);
+
+      if (formRecurring) {
+        const template = {
           id: uid(),
           type: formType,
           amount: num,
-          description: desc.trim(),
+          description: trimmedDesc,
           category,
-          date,
-        },
-        ...prev,
-      ]);
+          frequency: formRecurringFreq,
+          dayOfMonth: Number(date.slice(8, 10)),
+          weekday: weekdayFromDate(date),
+          startDate: date,
+          createdAt: new Date().toISOString(),
+          active: true,
+        };
+        setRecurring((prev) => [...prev, template]);
+      }
     }
     resetForm();
+  }
+
+  function handleDescBlur() {
+    const matched = lookupCategoryRule(categoryRules, desc, formType);
+    if (matched) setCategory(matched);
+  }
+
+  function handleDescChange(value) {
+    setDesc(value);
+    const matched = lookupCategoryRule(categoryRules, value, formType);
+    if (matched) setCategory(matched);
+  }
+
+  function deleteRecurring(id) {
+    setRecurring((prev) => prev.filter((r) => r.id !== id));
+  }
+
+  function toggleRecurringActive(id) {
+    setRecurring((prev) =>
+      prev.map((r) =>
+        r.id === id ? { ...r, active: r.active === false ? true : false } : r
+      )
+    );
   }
 
   function handleEdit(en) {
@@ -379,7 +531,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
   useEffect(() => {
     if (!voiceTranscript || isListening) return;
     const { amount: parsedAmount, description, category: parsedCat } =
-      parseVoiceText(voiceTranscript, formType);
+      parseVoiceText(voiceTranscript, formType, categoryRules);
     if (parsedAmount) setAmount(String(parsedAmount));
     if (description) setDesc(description);
     setCategory(parsedCat);
@@ -387,27 +539,51 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
       `Heard: "${voiceTranscript.trim()}" \u2014 review the fields below and add the entry.`
     );
     setVoiceTranscript("");
-  }, [voiceTranscript, isListening, formType]);
+  }, [voiceTranscript, isListening, formType, categoryRules]);
 
   const weekRange = useMemo(() => getWeekRange(weekAnchor), [weekAnchor]);
 
-  const months = useMemo(() => {
-    const set = new Set(entries.map((e) => e.date.slice(0, 7)));
-    set.add(todayStr().slice(0, 7));
+  const years = useMemo(() => {
+    const set = new Set(entries.map((e) => e.date.slice(0, 4)));
+    set.add(todayStr().slice(0, 4));
     return Array.from(set).sort().reverse();
   }, [entries]);
 
+  const months = useMemo(() => {
+    const set = new Set(
+      entries
+        .filter((e) => e.date.slice(0, 4) === year)
+        .map((e) => e.date.slice(0, 7))
+    );
+    const currentMonth = todayStr().slice(0, 7);
+    if (currentMonth.slice(0, 4) === year) set.add(currentMonth);
+    return Array.from(set).sort().reverse();
+  }, [entries, year]);
+
+  useEffect(() => {
+    if (periodMode !== "month") return;
+    if (months.length === 0) return;
+    if (!months.includes(month)) setMonth(months[0]);
+  }, [periodMode, months, month]);
+
   const periodEntries = useMemo(() => {
+    if (periodMode === "year") {
+      return entries.filter((e) => e.date.slice(0, 4) === year);
+    }
     if (periodMode === "month") {
       return entries.filter((e) => e.date.slice(0, 7) === month);
     }
     return entries.filter(
       (e) => e.date >= weekRange.startStr && e.date <= weekRange.endStr
     );
-  }, [entries, periodMode, month, weekRange]);
+  }, [entries, periodMode, year, month, weekRange]);
 
   const periodLabel =
-    periodMode === "month" ? monthLabel(month) : weekLabel(weekRange);
+    periodMode === "year"
+      ? year
+      : periodMode === "month"
+      ? monthLabel(month)
+      : weekLabel(weekRange);
 
   const displayEntries = useMemo(() => {
     return periodEntries
@@ -451,6 +627,32 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
 
   const maxCatTotal = catTotals.length ? catTotals[0].total : 1;
 
+  const monthlyExpenseTotals = useMemo(() => {
+    if (periodMode !== "year") return [];
+    const totals = Array.from({ length: 12 }, (_, i) => {
+      const ym = `${year}-${String(i + 1).padStart(2, "0")}`;
+      const total = entries
+        .filter((e) => e.type === "expense" && e.date.slice(0, 7) === ym)
+        .reduce((s, e) => s + e.amount, 0);
+      return { ym, total, label: monthNameOnly(ym) };
+    });
+    return totals.filter((t) => t.total > 0);
+  }, [entries, year, periodMode]);
+
+  const maxMonthlyTotal = monthlyExpenseTotals.length
+    ? Math.max(...monthlyExpenseTotals.map((t) => t.total))
+    : 1;
+
+  const categoryRuleList = useMemo(
+    () =>
+      Object.entries(categoryRules).map(([pattern, rule]) => ({
+        pattern,
+        ...rule,
+        label: catInfoFor(rule.type, rule.category)?.label ?? rule.category,
+      })),
+    [categoryRules]
+  );
+
   function updateBudgetDraft(id, value) {
     setBudgetDrafts((prev) => ({ ...prev, [id]: value }));
   }
@@ -474,6 +676,75 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
     return budgets[id] ? String(budgets[id]) : "";
   }
 
+  async function handleImportFile(e) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+
+    setImportNote("");
+    try {
+      const result = await parseExcelFile(file, entries, categoryRules);
+      if (result.entries.length === 0 && result.errors.length === 0) {
+        setImportNote("No rows found to import.");
+        return;
+      }
+      setImportPreview({ ...result, fileName: file.name });
+    } catch (err) {
+      setImportNote("Import failed. Check that the file matches the IDL format.");
+      console.error(err);
+    }
+  }
+
+  function confirmImport() {
+    if (!importPreview) return;
+    const { entries: imported, errors, skipped } = importPreview;
+    if (imported.length > 0) {
+      setEntries((prev) => [...imported, ...prev]);
+      learnCategoryRulesFromEntries(imported);
+    }
+    const parts = [];
+    if (imported.length > 0) {
+      parts.push(`Imported ${imported.length} entr${imported.length === 1 ? "y" : "ies"}`);
+    }
+    if (skipped > 0) {
+      parts.push(`skipped ${skipped} duplicate${skipped === 1 ? "" : "s"}`);
+    }
+    if (errors.length > 0) {
+      parts.push(`${errors.length} row${errors.length === 1 ? "" : "s"} skipped due to errors`);
+    }
+    setImportNote(parts.length ? parts.join("; ") + "." : "Nothing imported.");
+    if (errors.length > 0) console.warn("Excel import errors:", errors);
+    setImportPreview(null);
+  }
+
+  function exportBackup() {
+    downloadBackup(
+      createBackup({ entries, budgets, recurring, categoryRules })
+    );
+    setBackupNote("Full backup downloaded.");
+  }
+
+  async function handleRestoreBackup(e) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+
+    setBackupNote("");
+    try {
+      const text = await file.text();
+      const data = parseBackupFile(text);
+      setEntries(data.entries.map((en) => ({ type: "expense", ...en })));
+      setBudgets(data.budgets);
+      setRecurring(data.recurring);
+      setCategoryRules(data.categoryRules);
+      setBackupNote(
+        `Restored backup from ${data.exportedAt ? data.exportedAt.slice(0, 10) : "file"} (${data.entries.length} entries).`
+      );
+    } catch (err) {
+      setBackupNote(err.message || "Restore failed.");
+    }
+  }
+
   function exportCSV() {
     const header = ["Date", "Type", "Category", "Description", "Amount (INR)"];
     const rows = displayEntries.map((en) => {
@@ -493,7 +764,11 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     const periodTag =
-      periodMode === "month" ? month : `${weekRange.startStr}_to_${weekRange.endStr}`;
+      periodMode === "year"
+        ? year
+        : periodMode === "month"
+        ? month
+        : `${weekRange.startStr}_to_${weekRange.endStr}`;
     a.href = url;
     a.download = `ledger-${periodTag}.csv`;
     document.body.appendChild(a);
@@ -591,6 +866,26 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
           white-space: nowrap;
         }
         .row-hover:hover { background: #FBF8F1 !important; }
+        .ledger-modal-backdrop {
+          position: fixed;
+          inset: 0;
+          background: rgba(31,42,34,0.45);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          z-index: 100;
+          padding: 20px;
+        }
+        .ledger-modal {
+          background: #FFFDF8;
+          border: 1px solid #D8CDB4;
+          border-radius: 8px;
+          max-width: 640px;
+          width: 100%;
+          max-height: 85vh;
+          overflow: auto;
+          padding: 22px 24px;
+        }
         ::placeholder { color: #A69C82; }
         @media (max-width: 720px) {
           .lg-grid { grid-template-columns: 1fr !important; }
@@ -983,9 +1278,51 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                   : "Chai and samosa with Priya"
               }
               value={desc}
-              onChange={(e) => setDesc(e.target.value)}
+              onChange={(e) => handleDescChange(e.target.value)}
+              onBlur={handleDescBlur}
             />
           </div>
+
+          {!editingId && (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+                marginBottom: 14,
+                flexWrap: "wrap",
+              }}
+            >
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  fontSize: 13,
+                  color: "#4A5A4E",
+                  cursor: "pointer",
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={formRecurring}
+                  onChange={(e) => setFormRecurring(e.target.checked)}
+                />
+                Repeat this entry
+              </label>
+              {formRecurring && (
+                <select
+                  className="ledger-select"
+                  style={{ width: "auto", minWidth: 120 }}
+                  value={formRecurringFreq}
+                  onChange={(e) => setFormRecurringFreq(e.target.value)}
+                >
+                  <option value="monthly">Monthly</option>
+                  <option value="weekly">Weekly</option>
+                </select>
+              )}
+            </div>
+          )}
 
           {formError && (
             <div style={{ color: "#A93B3B", fontSize: 13, marginBottom: 12 }}>
@@ -1009,6 +1346,119 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
           </div>
         </form>
 
+        {/* Recurring entries */}
+        <div
+          style={{
+            background: "#FFFDF8",
+            border: "1px solid #D8CDB4",
+            borderRadius: 8,
+            marginBottom: 28,
+            overflow: "hidden",
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => setShowRecurring((v) => !v)}
+            style={{
+              width: "100%",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              padding: "14px 18px",
+              background: "none",
+              border: "none",
+              cursor: "pointer",
+              fontFamily: "'Fraunces', serif",
+              fontSize: 15,
+              fontWeight: 600,
+              color: "#1F2A22",
+            }}
+          >
+            Recurring entries ({recurring.length})
+            <span style={{ fontSize: 12, color: "#74836A" }}>
+              {showRecurring ? "Hide" : "Show"}
+            </span>
+          </button>
+          {showRecurring && (
+            <div style={{ borderTop: "1px dashed #E4DCC5", padding: "12px 18px 16px" }}>
+              {recurring.length === 0 ? (
+                <div style={{ fontSize: 13, color: "#74836A" }}>
+                  No recurring entries yet. Check &ldquo;Repeat this entry&rdquo; when adding Netflix, rent, salary, etc.
+                </div>
+              ) : (
+                recurring.map((r, i) => {
+                  const cat = catInfoFor(r.type, r.category);
+                  return (
+                    <div
+                      key={r.id}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 12,
+                        padding: "10px 0",
+                        borderTop: i === 0 ? "none" : "1px dashed #E4DCC5",
+                        flexWrap: "wrap",
+                        opacity: r.active === false ? 0.55 : 1,
+                      }}
+                    >
+                      <div style={{ flex: 1, minWidth: 140 }}>
+                        <div style={{ fontSize: 14, color: "#1F2A22" }}>{r.description}</div>
+                        <div style={{ fontSize: 12, color: "#74836A", marginTop: 2 }}>
+                          {r.frequency === "weekly" ? "Every week" : `Day ${r.dayOfMonth} each month`}
+                          {r.active === false && " · paused"}
+                        </div>
+                      </div>
+                      <div
+                        className="cat-stamp"
+                        style={{ color: cat.color, borderColor: cat.color }}
+                      >
+                        {cat.label}
+                      </div>
+                      <div
+                        style={{
+                          fontFamily: "'IBM Plex Mono', monospace",
+                          fontSize: 13,
+                          fontWeight: 600,
+                          width: 80,
+                          textAlign: "right",
+                        }}
+                      >
+                        {fmtMoney(r.amount)}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => toggleRecurringActive(r.id)}
+                        style={{
+                          background: "none",
+                          border: "none",
+                          cursor: "pointer",
+                          color: "#74836A",
+                          fontSize: 12,
+                        }}
+                      >
+                        {r.active === false ? "Resume" : "Pause"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => deleteRecurring(r.id)}
+                        style={{
+                          background: "none",
+                          border: "none",
+                          cursor: "pointer",
+                          color: "#A93B3B",
+                          fontSize: 12,
+                        }}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          )}
+        </div>
+
         {/* Period toggle + navigation */}
         <div
           style={{
@@ -1022,8 +1472,16 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
           <div style={{ display: "flex" }}>
             <button
               type="button"
-              className={`seg-btn ${periodMode === "month" ? "active" : ""}`}
+              className={`seg-btn ${periodMode === "year" ? "active" : ""}`}
               style={{ borderRadius: "4px 0 0 4px" }}
+              onClick={() => setPeriodMode("year")}
+            >
+              Year
+            </button>
+            <button
+              type="button"
+              className={`seg-btn ${periodMode === "month" ? "active" : ""}`}
+              style={{ borderRadius: 0, borderLeft: "none" }}
               onClick={() => setPeriodMode("month")}
             >
               Month
@@ -1038,19 +1496,46 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
             </button>
           </div>
 
-          {periodMode === "month" ? (
+          {periodMode === "year" ? (
             <select
               className="ledger-select"
-              style={{ width: "auto", minWidth: 160 }}
-              value={month}
-              onChange={(e) => setMonth(e.target.value)}
+              style={{ width: "auto", minWidth: 100 }}
+              value={year}
+              onChange={(e) => setYear(e.target.value)}
             >
-              {months.map((m) => (
-                <option key={m} value={m}>
-                  {monthLabel(m)}
+              {years.map((y) => (
+                <option key={y} value={y}>
+                  {y}
                 </option>
               ))}
             </select>
+          ) : periodMode === "month" ? (
+            <>
+              <select
+                className="ledger-select"
+                style={{ width: "auto", minWidth: 100 }}
+                value={year}
+                onChange={(e) => setYear(e.target.value)}
+              >
+                {years.map((y) => (
+                  <option key={y} value={y}>
+                    {y}
+                  </option>
+                ))}
+              </select>
+              <select
+                className="ledger-select"
+                style={{ width: "auto", minWidth: 140 }}
+                value={month}
+                onChange={(e) => setMonth(e.target.value)}
+              >
+                {months.map((m) => (
+                  <option key={m} value={m}>
+                    {monthNameOnly(m)}
+                  </option>
+                ))}
+              </select>
+            </>
           ) : (
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <button
@@ -1162,6 +1647,21 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
+          <input
+            ref={importInputRef}
+            type="file"
+            accept=".xlsx,.xls,.csv"
+            style={{ display: "none" }}
+            onChange={handleImportFile}
+          />
+          <button
+            type="button"
+            className="ledger-btn ledger-btn-ghost"
+            style={{ textTransform: "none", letterSpacing: "normal", fontWeight: 500 }}
+            onClick={() => importInputRef.current?.click()}
+          >
+            Import Excel
+          </button>
           <button
             type="button"
             className="ledger-btn ledger-btn-ghost"
@@ -1171,9 +1671,207 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
           >
             Export CSV
           </button>
+          <button
+            type="button"
+            className="ledger-btn ledger-btn-ghost"
+            style={{ textTransform: "none", letterSpacing: "normal", fontWeight: 500 }}
+            onClick={exportBackup}
+          >
+            Backup
+          </button>
+          <input
+            ref={backupInputRef}
+            type="file"
+            accept=".json,application/json"
+            style={{ display: "none" }}
+            onChange={handleRestoreBackup}
+          />
+          <button
+            type="button"
+            className="ledger-btn ledger-btn-ghost"
+            style={{ textTransform: "none", letterSpacing: "normal", fontWeight: 500 }}
+            onClick={() => backupInputRef.current?.click()}
+          >
+            Restore
+          </button>
         </div>
+        {(importNote || backupNote) && (
+          <div
+            style={{
+              fontSize: 12.5,
+              color: "#3C6E91",
+              marginTop: -16,
+              marginBottom: 20,
+            }}
+          >
+            {[importNote, backupNote].filter(Boolean).join(" ")}
+          </div>
+        )}
+
+        {importPreview && (
+          <div className="ledger-modal-backdrop" onClick={() => setImportPreview(null)}>
+            <div
+              className="ledger-modal"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div
+                style={{
+                  fontFamily: "'Fraunces', serif",
+                  fontSize: 18,
+                  fontWeight: 600,
+                  marginBottom: 8,
+                }}
+              >
+                Import preview
+              </div>
+              <div style={{ fontSize: 13, color: "#74836A", marginBottom: 16 }}>
+                {importPreview.fileName} &mdash; {importPreview.entries.length} to import
+                {importPreview.skipped > 0 &&
+                  `, ${importPreview.skipped} duplicate${importPreview.skipped === 1 ? "" : "s"} skipped`}
+                {importPreview.errors.length > 0 &&
+                  `, ${importPreview.errors.length} error${importPreview.errors.length === 1 ? "" : "s"}`}
+              </div>
+              {importPreview.entries.length > 0 && (
+                <div
+                  style={{
+                    border: "1px solid #D8CDB4",
+                    borderRadius: 6,
+                    overflow: "hidden",
+                    marginBottom: 12,
+                    maxHeight: 240,
+                    overflowY: "auto",
+                  }}
+                >
+                  {importPreview.entries.slice(0, 15).map((en, i) => {
+                    const cat = catInfoFor(en.type, en.category);
+                    return (
+                      <div
+                        key={en.id}
+                        style={{
+                          display: "flex",
+                          gap: 10,
+                          padding: "8px 12px",
+                          fontSize: 12.5,
+                          borderTop: i === 0 ? "none" : "1px dashed #E4DCC5",
+                        }}
+                      >
+                        <span style={{ color: "#74836A", width: 72 }}>{en.date}</span>
+                        <span style={{ flex: 1 }}>{en.description}</span>
+                        <span style={{ color: "#74836A" }}>{cat?.label}</span>
+                        <span
+                          style={{
+                            fontFamily: "'IBM Plex Mono', monospace",
+                            fontWeight: 600,
+                          }}
+                        >
+                          {fmtMoney(en.amount)}
+                        </span>
+                      </div>
+                    );
+                  })}
+                  {importPreview.entries.length > 15 && (
+                    <div style={{ padding: "8px 12px", fontSize: 12, color: "#74836A" }}>
+                      + {importPreview.entries.length - 15} more rows
+                    </div>
+                  )}
+                </div>
+              )}
+              {importPreview.errors.length > 0 && (
+                <div
+                  style={{
+                    fontSize: 12,
+                    color: "#A93B3B",
+                    marginBottom: 12,
+                    maxHeight: 80,
+                    overflowY: "auto",
+                  }}
+                >
+                  {importPreview.errors.slice(0, 5).map((err) => (
+                    <div key={err}>{err}</div>
+                  ))}
+                </div>
+              )}
+              <div style={{ display: "flex", gap: 10 }}>
+                <button
+                  type="button"
+                  className="ledger-btn"
+                  onClick={confirmImport}
+                  disabled={importPreview.entries.length === 0}
+                >
+                  Import {importPreview.entries.length} entr
+                  {importPreview.entries.length === 1 ? "y" : "ies"}
+                </button>
+                <button
+                  type="button"
+                  className="ledger-btn ledger-btn-ghost"
+                  onClick={() => setImportPreview(null)}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Category breakdown */}
+        {periodMode === "year" && monthlyExpenseTotals.length > 0 && (
+          <div style={{ marginBottom: 28 }}>
+            <div
+              style={{
+                fontSize: 11,
+                fontWeight: 600,
+                letterSpacing: "0.1em",
+                textTransform: "uppercase",
+                color: "#74836A",
+                marginBottom: 10,
+              }}
+            >
+              Month-over-month spending &mdash; {year}
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {monthlyExpenseTotals.map((m) => (
+                <div
+                  key={m.ym}
+                  style={{ display: "flex", alignItems: "center", gap: 10 }}
+                >
+                  <div style={{ width: 72, fontSize: 12.5, color: "#1F2A22" }}>
+                    {m.label}
+                  </div>
+                  <div
+                    style={{
+                      flex: 1,
+                      background: "#EDE6D6",
+                      height: 8,
+                      borderRadius: 4,
+                      overflow: "hidden",
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: `${(m.total / maxMonthlyTotal) * 100}%`,
+                        background: "#3C6E91",
+                        height: "100%",
+                        borderRadius: 4,
+                      }}
+                    />
+                  </div>
+                  <div
+                    style={{
+                      fontFamily: "'IBM Plex Mono', monospace",
+                      fontSize: 12.5,
+                      width: 70,
+                      textAlign: "right",
+                      color: "#1F2A22",
+                    }}
+                  >
+                    {fmtMoney(m.total)}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {catTotals.length > 0 && (
           <div style={{ marginBottom: 28 }}>
             <div
@@ -1232,6 +1930,66 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
           </div>
         )}
 
+        {/* Category rules */}
+        {categoryRuleList.length > 0 && (
+          <div style={{ marginBottom: 28 }}>
+            <div
+              style={{
+                fontSize: 11,
+                fontWeight: 600,
+                letterSpacing: "0.1em",
+                textTransform: "uppercase",
+                color: "#74836A",
+                marginBottom: 10,
+              }}
+            >
+              Saved category rules
+            </div>
+            <div
+              style={{
+                border: "1px solid #D8CDB4",
+                borderRadius: 8,
+                background: "#FFFDF8",
+                overflow: "hidden",
+              }}
+            >
+              {categoryRuleList.map((rule, i) => (
+                <div
+                  key={rule.pattern}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 12,
+                    padding: "10px 16px",
+                    borderTop: i === 0 ? "none" : "1px dashed #E4DCC5",
+                    fontSize: 13,
+                  }}
+                >
+                  <div style={{ flex: 1, color: "#1F2A22" }}>{rule.pattern}</div>
+                  <div style={{ color: "#74836A", fontSize: 12 }}>
+                    {rule.type} &rarr; {rule.label}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setCategoryRules((prev) => removeCategoryRule(prev, rule.pattern))
+                    }
+                    style={{
+                      background: "none",
+                      border: "none",
+                      cursor: "pointer",
+                      color: "#A93B3B",
+                      fontSize: 12,
+                    }}
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Monthly budgets */}
         {periodMode === "month" ? (
           <div style={{ marginBottom: 28 }}>
@@ -1245,7 +2003,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                 marginBottom: 10,
               }}
             >
-              Monthly budgets
+              Monthly budgets &mdash; {monthLabel(month)}
             </div>
             <div
               style={{
@@ -1345,6 +2103,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
             }}
           >
             Budgets are tracked monthly &mdash; switch to Month view to set or check limits.
+            {periodMode === "year" && " Year view shows spending totals only."}
           </div>
         )}
 
