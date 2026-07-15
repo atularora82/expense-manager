@@ -7,6 +7,12 @@ import {
 } from "./categoryRules.js";
 import { processRecurringItems } from "./recurring.js";
 import { createBackup, downloadBackup, parseBackupFile } from "./backup.js";
+import {
+  INVESTMENT_CATEGORIES,
+  investmentCatMap,
+  detectInvestmentCategory,
+} from "./investments.js";
+import { filterEntriesGlobal } from "./globalSearch.js";
 
 const CATEGORIES = [
   { id: "food", label: "Food & Dining", color: "#A93B3B" },
@@ -39,10 +45,14 @@ const incomeCatMap = Object.fromEntries(
 );
 
 function catsForType(type) {
-  return type === "income" ? INCOME_CATEGORIES : CATEGORIES;
+  if (type === "income") return INCOME_CATEGORIES;
+  if (type === "investment") return INVESTMENT_CATEGORIES;
+  return CATEGORIES;
 }
 function catInfoFor(type, id) {
-  return (type === "income" ? incomeCatMap : catMap)[id];
+  if (type === "income") return incomeCatMap[id];
+  if (type === "investment") return investmentCatMap[id];
+  return catMap[id];
 }
 
 function todayStr() {
@@ -80,6 +90,15 @@ function fmtMoney(n) {
 function fmtDate(iso) {
   const d = new Date(iso + "T00:00:00");
   return d.toLocaleDateString("en-IN", { month: "short", day: "2-digit" });
+}
+
+function fmtDateFull(iso) {
+  const d = new Date(iso + "T00:00:00");
+  return d.toLocaleDateString("en-IN", {
+    month: "short",
+    day: "2-digit",
+    year: "numeric",
+  });
 }
 
 function uid() {
@@ -147,6 +166,7 @@ const INCOME_KEYWORDS = {
 };
 
 function detectCategory(lowerText, type) {
+  if (type === "investment") return detectInvestmentCategory(lowerText);
   const list = catsForType(type);
   const keywords = type === "income" ? INCOME_KEYWORDS : EXPENSE_KEYWORDS;
   for (const cat of list) {
@@ -234,6 +254,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
   const [showRecurring, setShowRecurring] = useState(false);
   const importInputRef = useRef(null);
   const backupInputRef = useRef(null);
+  const searchInputRef = useRef(null);
   const recognitionRef = React.useRef(null);
   const voiceSupported =
     typeof window !== "undefined" &&
@@ -346,6 +367,21 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
   }, [categoryRules, rulesLoaded]);
 
   useEffect(() => {
+    function onKeyDown(e) {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      }
+      if (e.key === "Escape" && document.activeElement === searchInputRef.current) {
+        setSearch("");
+        searchInputRef.current?.blur();
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  useEffect(() => {
     if (!loaded || !recurringLoaded || recurring.length === 0) return;
     const generated = processRecurringItems(recurring, entries, todayStr());
     if (generated.length > 0) {
@@ -377,6 +413,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
   function switchFormType(t) {
     setFormType(t);
     setCategory(catsForType(t)[0].id);
+    setFormRecurring(t === "investment");
     setFormError("");
   }
 
@@ -472,6 +509,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
     setDesc(en.description);
     setCategory(en.category);
     setDate(en.date);
+    setFormRecurring(false);
     setFormError("");
   }
 
@@ -536,7 +574,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
     if (description) setDesc(description);
     setCategory(parsedCat);
     setVoiceNote(
-      `Heard: "${voiceTranscript.trim()}" \u2014 review the fields below and add the entry.`
+      `Heard: "${voiceTranscript.trim()}"review the fields below and add the entry.`
     );
     setVoiceTranscript("");
   }, [voiceTranscript, isListening, formType, categoryRules]);
@@ -585,17 +623,41 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
       ? monthLabel(month)
       : weekLabel(weekRange);
 
+  const globalSearchActive = Boolean(search.trim());
+
   const displayEntries = useMemo(() => {
+    if (globalSearchActive) {
+      return filterEntriesGlobal(entries, search, catInfoFor, {
+        type: filterType,
+        category: filterCat,
+      });
+    }
     return periodEntries
       .filter((e) => filterType === "all" || e.type === filterType)
       .filter((e) => filterCat === "all" || e.category === filterCat)
-      .filter((e) =>
-        search.trim()
-          ? e.description.toLowerCase().includes(search.trim().toLowerCase())
-          : true
-      )
       .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
-  }, [periodEntries, filterType, filterCat, search]);
+  }, [
+    entries,
+    periodEntries,
+    filterType,
+    filterCat,
+    search,
+    globalSearchActive,
+  ]);
+
+  const globalSearchTotals = useMemo(() => {
+    if (!globalSearchActive) return null;
+    const expense = displayEntries
+      .filter((e) => e.type === "expense")
+      .reduce((s, e) => s + e.amount, 0);
+    const income = displayEntries
+      .filter((e) => e.type === "income")
+      .reduce((s, e) => s + e.amount, 0);
+    const investment = displayEntries
+      .filter((e) => e.type === "investment")
+      .reduce((s, e) => s + e.amount, 0);
+    return { expense, income, investment, count: displayEntries.length };
+  }, [displayEntries, globalSearchActive]);
 
   const periodIncomeTotal = useMemo(
     () =>
@@ -611,7 +673,15 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
         .reduce((s, e) => s + e.amount, 0),
     [periodEntries]
   );
-  const periodNet = periodIncomeTotal - periodExpenseTotal;
+  const periodInvestmentTotal = useMemo(
+    () =>
+      periodEntries
+        .filter((e) => e.type === "investment")
+        .reduce((s, e) => s + e.amount, 0),
+    [periodEntries]
+  );
+  const periodNet =
+    periodIncomeTotal - periodExpenseTotal - periodInvestmentTotal;
 
   const catTotals = useMemo(() => {
     const map = {};
@@ -626,6 +696,23 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
   }, [periodEntries]);
 
   const maxCatTotal = catTotals.length ? catTotals[0].total : 1;
+
+  const investmentTotals = useMemo(() => {
+    const map = {};
+    periodEntries
+      .filter((e) => e.type === "investment")
+      .forEach((e) => {
+        map[e.category] = (map[e.category] || 0) + e.amount;
+      });
+    return Object.entries(map)
+      .map(([id, total]) => ({ id, total, ...investmentCatMap[id] }))
+      .filter((c) => c.label)
+      .sort((a, b) => b.total - a.total);
+  }, [periodEntries]);
+
+  const maxInvestmentTotal = investmentTotals.length
+    ? investmentTotals[0].total
+    : 1;
 
   const monthlyExpenseTotals = useMemo(() => {
     if (periodMode !== "year") return [];
@@ -780,6 +867,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
   const categoryFilterOptions = useMemo(() => {
     if (filterType === "income") return INCOME_CATEGORIES;
     if (filterType === "expense") return CATEGORIES;
+    if (filterType === "investment") return INVESTMENT_CATEGORIES;
     return null;
   }, [filterType]);
 
@@ -886,6 +974,32 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
           overflow: auto;
           padding: 22px 24px;
         }
+        .ledger-search-wrap {
+          position: relative;
+          margin-bottom: 28px;
+        }
+        .ledger-search-input {
+          padding-left: 36px;
+          padding-right: 72px;
+        }
+        .ledger-search-icon {
+          position: absolute;
+          left: 12px;
+          top: 50%;
+          transform: translateY(-50%);
+          color: #74836A;
+          font-size: 14px;
+          pointer-events: none;
+        }
+        .ledger-search-hint {
+          position: absolute;
+          right: 10px;
+          top: 50%;
+          transform: translateY(-50%);
+          font-size: 10.5px;
+          color: #A69C82;
+          letter-spacing: 0.04em;
+        }
         ::placeholder { color: #A69C82; }
         @media (max-width: 720px) {
           .lg-grid { grid-template-columns: 1fr !important; }
@@ -987,6 +1101,19 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
               >
                 -{fmtMoney(periodExpenseTotal)}
               </div>
+              {periodInvestmentTotal > 0 && (
+                <div
+                  style={{
+                    fontFamily: "'IBM Plex Mono', monospace",
+                    fontSize: 13,
+                    fontWeight: 600,
+                    color: "#4A5A91",
+                    marginTop: 2,
+                  }}
+                >
+                  ↗{fmtMoney(periodInvestmentTotal)}
+                </div>
+              )}
             </div>
 
             {/* Signature stamp: net balance */}
@@ -1052,6 +1179,45 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
           </div>
         </div>
 
+        {/* Global search */}
+        <div className="ledger-search-wrap">
+          <span className="ledger-search-icon" aria-hidden="true">
+            ⌕
+          </span>
+          <input
+            ref={searchInputRef}
+            className="ledger-input ledger-search-input"
+            type="search"
+            placeholder="Search all entries — description, category, amount, date…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            aria-label="Search all entries"
+          />
+          {!search && (
+            <span className="ledger-search-hint">Ctrl+K</span>
+          )}
+          {search && (
+            <button
+              type="button"
+              onClick={() => setSearch("")}
+              style={{
+                position: "absolute",
+                right: 10,
+                top: "50%",
+                transform: "translateY(-50%)",
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                color: "#74836A",
+                fontSize: 12,
+                fontWeight: 500,
+              }}
+            >
+              Clear
+            </button>
+          )}
+        </div>
+
         {/* Add / edit entry - receipt slip */}
         <form
           onSubmit={handleSubmit}
@@ -1108,10 +1274,18 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                 <button
                   type="button"
                   className={`seg-btn ${formType === "income" ? "active" : ""}`}
-                  style={{ borderRadius: "0 4px 4px 0", borderLeft: "none" }}
+                  style={{ borderRadius: 0, borderLeft: "none" }}
                   onClick={() => switchFormType("income")}
                 >
                   Income
+                </button>
+                <button
+                  type="button"
+                  className={`seg-btn ${formType === "investment" ? "active" : ""}`}
+                  style={{ borderRadius: "0 4px 4px 0", borderLeft: "none" }}
+                  onClick={() => switchFormType("investment")}
+                >
+                  Investment
                 </button>
               </div>
             </div>
@@ -1141,7 +1315,11 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
               />
               {isListening
                 ? "Listening... tap to stop"
-                : `Speak ${formType === "income" ? "income" : "an expense"}`}
+                : formType === "income"
+                ? "Speak income"
+                : formType === "investment"
+                ? "Speak investment"
+                : "Speak an expense"}
             </button>
           </div>
 
@@ -1275,6 +1453,8 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
               placeholder={
                 formType === "income"
                   ? "Freelance payment from client"
+                  : formType === "investment"
+                  ? "HDFC Flexi Cap SIP"
                   : "Chai and samosa with Priya"
               }
               value={desc}
@@ -1309,6 +1489,11 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                   onChange={(e) => setFormRecurring(e.target.checked)}
                 />
                 Repeat this entry
+                {formType === "investment" && (
+                  <span style={{ color: "#74836A", fontSize: 12 }}>
+                    {" "}(recommended for SIP / LIC)
+                  </span>
+                )}
               </label>
               {formRecurring && (
                 <select
@@ -1606,6 +1791,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
             <option value="all">All entries</option>
             <option value="expense">Expenses only</option>
             <option value="income">Income only</option>
+            <option value="investment">Investments only</option>
           </select>
           <select
             className="ledger-select"
@@ -1636,17 +1822,16 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                     </option>
                   ))}
                 </optgroup>
+                <optgroup label="Investments">
+                  {INVESTMENT_CATEGORIES.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.label}
+                    </option>
+                  ))}
+                </optgroup>
               </>
             )}
           </select>
-          <input
-            className="ledger-input"
-            style={{ width: "auto", minWidth: 180, flex: "1 1 180px" }}
-            type="text"
-            placeholder="Search description..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
           <input
             ref={importInputRef}
             type="file"
@@ -1813,8 +1998,38 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
           </div>
         )}
 
+        {globalSearchActive && (
+          <div
+            style={{
+              fontSize: 12.5,
+              color: "#3C6E91",
+              marginTop: -12,
+              marginBottom: 20,
+              background: "#F6F1E6",
+              border: "1px solid #E4DCC5",
+              borderRadius: 6,
+              padding: "10px 14px",
+            }}
+          >
+            Searching all entries for &ldquo;{search.trim()}&rdquo; &mdash;{" "}
+            {globalSearchTotals?.count ?? 0} result
+            {(globalSearchTotals?.count ?? 0) === 1 ? "" : "s"}
+            {globalSearchTotals && globalSearchTotals.count > 0 && (
+              <span style={{ color: "#74836A" }}>
+                {" "}
+                (expenses {fmtMoney(globalSearchTotals.expense)}
+                {globalSearchTotals.income > 0 &&
+                  ` · income ${fmtMoney(globalSearchTotals.income)}`}
+                {globalSearchTotals.investment > 0 &&
+                  ` · investments ${fmtMoney(globalSearchTotals.investment)}`}
+                )
+              </span>
+            )}
+          </div>
+        )}
+
         {/* Category breakdown */}
-        {periodMode === "year" && monthlyExpenseTotals.length > 0 && (
+        {!globalSearchActive && periodMode === "year" && monthlyExpenseTotals.length > 0 && (
           <div style={{ marginBottom: 28 }}>
             <div
               style={{
@@ -1872,7 +2087,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
           </div>
         )}
 
-        {catTotals.length > 0 && (
+        {catTotals.length > 0 && !globalSearchActive && (
           <div style={{ marginBottom: 28 }}>
             <div
               style={{
@@ -1907,6 +2122,64 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                     <div
                       style={{
                         width: `${(c.total / maxCatTotal) * 100}%`,
+                        background: c.color,
+                        height: "100%",
+                        borderRadius: 4,
+                      }}
+                    />
+                  </div>
+                  <div
+                    style={{
+                      fontFamily: "'IBM Plex Mono', monospace",
+                      fontSize: 12.5,
+                      width: 70,
+                      textAlign: "right",
+                      color: "#1F2A22",
+                    }}
+                  >
+                    {fmtMoney(c.total)}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {investmentTotals.length > 0 && !globalSearchActive && (
+          <div style={{ marginBottom: 28 }}>
+            <div
+              style={{
+                fontSize: 11,
+                fontWeight: 600,
+                letterSpacing: "0.1em",
+                textTransform: "uppercase",
+                color: "#74836A",
+                marginBottom: 10,
+              }}
+            >
+              Investments by type &mdash; {periodLabel}
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {investmentTotals.map((c) => (
+                <div
+                  key={c.id}
+                  style={{ display: "flex", alignItems: "center", gap: 10 }}
+                >
+                  <div style={{ width: 118, fontSize: 12.5, color: "#1F2A22" }}>
+                    {c.label}
+                  </div>
+                  <div
+                    style={{
+                      flex: 1,
+                      background: "#EDE6D6",
+                      height: 8,
+                      borderRadius: 4,
+                      overflow: "hidden",
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: `${(c.total / maxInvestmentTotal) * 100}%`,
                         background: c.color,
                         height: "100%",
                         borderRadius: 4,
@@ -1991,7 +2264,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
         )}
 
         {/* Monthly budgets */}
-        {periodMode === "month" ? (
+        {periodMode === "month" && !globalSearchActive ? (
           <div style={{ marginBottom: 28 }}>
             <div
               style={{
@@ -2083,7 +2356,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                         type="number"
                         min="0"
                         step="1"
-                        placeholder="\u2014"
+                        placeholder=""
                         value={budgetValueFor(c.id)}
                         onChange={(e) => updateBudgetDraft(c.id, e.target.value)}
                         onBlur={() => commitBudget(c.id)}
@@ -2094,7 +2367,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
               })}
             </div>
           </div>
-        ) : (
+        ) : !globalSearchActive ? (
           <div
             style={{
               fontSize: 12.5,
@@ -2105,7 +2378,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
             Budgets are tracked monthly &mdash; switch to Month view to set or check limits.
             {periodMode === "year" && " Year view shows spending totals only."}
           </div>
-        )}
+        ) : null}
 
         {/* Ledger list */}
         <div
@@ -2119,6 +2392,11 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
           }}
         >
           Entries ({displayEntries.length})
+          {globalSearchActive && (
+            <span style={{ fontWeight: 500, color: "#3C6E91", marginLeft: 8 }}>
+              all time
+            </span>
+          )}
         </div>
 
         {!loaded ? (
@@ -2136,7 +2414,9 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
               fontSize: 14,
             }}
           >
-            No entries yet for this view. Add one above to start the ledger.
+            {globalSearchActive
+              ? `No entries match "${search.trim()}". Try another keyword or clear search.`
+              : "No entries yet for this view. Add one above to start the ledger."}
           </div>
         ) : (
           <div
@@ -2150,6 +2430,13 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
             {displayEntries.map((en, i) => {
               const cat = catInfoFor(en.type, en.category);
               const isIncome = en.type === "income";
+              const isInvestment = en.type === "investment";
+              const amountColor = isIncome
+                ? "#2F6B4F"
+                : isInvestment
+                ? "#4A5A91"
+                : "#1F2A22";
+              const amountPrefix = isIncome ? "+" : isInvestment ? "↗" : "-";
               return (
                 <div
                   key={en.id}
@@ -2167,11 +2454,11 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                       fontFamily: "'IBM Plex Mono', monospace",
                       fontSize: 12,
                       color: "#74836A",
-                      width: 46,
+                      width: globalSearchActive ? 88 : 46,
                       flexShrink: 0,
                     }}
                   >
-                    {fmtDate(en.date)}
+                    {globalSearchActive ? fmtDateFull(en.date) : fmtDate(en.date)}
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div
@@ -2197,13 +2484,13 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                       fontFamily: "'IBM Plex Mono', monospace",
                       fontSize: 14,
                       fontWeight: 600,
-                      color: isIncome ? "#2F6B4F" : "#1F2A22",
+                      color: amountColor,
                       width: 90,
                       textAlign: "right",
                       flexShrink: 0,
                     }}
                   >
-                    {isIncome ? "+" : "-"}
+                    {amountPrefix}
                     {fmtMoney(en.amount)}
                   </div>
                   <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
