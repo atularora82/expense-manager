@@ -212,6 +212,11 @@ function csvValue(v) {
   return s;
 }
 
+function resolveFormCategory(type, categoryId) {
+  const list = catsForType(type);
+  return list.some((c) => c.id === categoryId) ? categoryId : list[0].id;
+}
+
 export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
   const [entries, setEntries] = useState([]);
   const [loaded, setLoaded] = useState(false);
@@ -233,6 +238,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
   const [date, setDate] = useState(todayStr());
   const [formRecurring, setFormRecurring] = useState(false);
   const [formRecurringFreq, setFormRecurringFreq] = useState("monthly");
+  const [categoryLocked, setCategoryLocked] = useState(false);
   const [formError, setFormError] = useState("");
   const [editingId, setEditingId] = useState(null);
 
@@ -255,6 +261,8 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
   const importInputRef = useRef(null);
   const backupInputRef = useRef(null);
   const searchInputRef = useRef(null);
+  const categoryRef = useRef(category);
+  categoryRef.current = category;
   const recognitionRef = React.useRef(null);
   const voiceSupported =
     typeof window !== "undefined" &&
@@ -406,6 +414,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
     setDate(todayStr());
     setFormRecurring(false);
     setFormRecurringFreq("monthly");
+    setCategoryLocked(false);
     setEditingId(null);
     setFormError("");
   }
@@ -413,6 +422,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
   function switchFormType(t) {
     setFormType(t);
     setCategory(catsForType(t)[0].id);
+    setCategoryLocked(false);
     setFormRecurring(t === "investment");
     setFormError("");
   }
@@ -429,8 +439,9 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
       return;
     }
     const trimmedDesc = desc.trim();
+    const savedCategory = resolveFormCategory(formType, categoryRef.current);
     setCategoryRules((prev) =>
-      saveCategoryRule(prev, trimmedDesc, formType, category)
+      saveCategoryRule(prev, trimmedDesc, formType, savedCategory)
     );
 
     if (editingId) {
@@ -441,7 +452,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                 ...en,
                 amount: num,
                 description: trimmedDesc,
-                category,
+                category: savedCategory,
                 date,
                 type: formType,
               }
@@ -454,7 +465,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
         type: formType,
         amount: num,
         description: trimmedDesc,
-        category,
+        category: savedCategory,
         date,
       };
       setEntries((prev) => [newEntry, ...prev]);
@@ -465,7 +476,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
           type: formType,
           amount: num,
           description: trimmedDesc,
-          category,
+          category: savedCategory,
           frequency: formRecurringFreq,
           dayOfMonth: Number(date.slice(8, 10)),
           weekday: weekdayFromDate(date),
@@ -479,15 +490,20 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
     resetForm();
   }
 
-  function handleDescBlur() {
-    const matched = lookupCategoryRule(categoryRules, desc, formType);
+  function suggestCategoryFromDesc(value) {
+    if (categoryLocked || !value.trim()) return;
+    const matched = lookupCategoryRule(categoryRules, value, formType);
     if (matched) setCategory(matched);
   }
 
   function handleDescChange(value) {
     setDesc(value);
-    const matched = lookupCategoryRule(categoryRules, value, formType);
-    if (matched) setCategory(matched);
+    suggestCategoryFromDesc(value);
+  }
+
+  function handleCategoryChange(value) {
+    setCategory(value);
+    setCategoryLocked(true);
   }
 
   function deleteRecurring(id) {
@@ -507,9 +523,10 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
     setEditingId(en.id);
     setAmount(String(en.amount));
     setDesc(en.description);
-    setCategory(en.category);
+    setCategory(resolveFormCategory(en.type, en.category));
     setDate(en.date);
     setFormRecurring(false);
+    setCategoryLocked(true);
     setFormError("");
   }
 
@@ -573,8 +590,9 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
     if (parsedAmount) setAmount(String(parsedAmount));
     if (description) setDesc(description);
     setCategory(parsedCat);
+    setCategoryLocked(false);
     setVoiceNote(
-      `Heard: "${voiceTranscript.trim()}"review the fields below and add the entry.`
+      `Heard: "${voiceTranscript.trim()}" \u2014 review the fields below and add the entry.`
     );
     setVoiceTranscript("");
   }, [voiceTranscript, isListening, formType, categoryRules]);
@@ -1379,7 +1397,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                 type="number"
                 step="0.01"
                 min="0"
-                placeholder="\u20B90.00"
+                placeholder=""
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
               />
@@ -1421,8 +1439,8 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
               </label>
               <select
                 className="ledger-select"
-                value={category}
-                onChange={(e) => setCategory(e.target.value)}
+                value={resolveFormCategory(formType, category)}
+                onChange={(e) => handleCategoryChange(e.target.value)}
               >
                 {catsForType(formType).map((c) => (
                   <option key={c.id} value={c.id}>
@@ -1459,7 +1477,6 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
               }
               value={desc}
               onChange={(e) => handleDescChange(e.target.value)}
-              onBlur={handleDescBlur}
             />
           </div>
 
@@ -1516,7 +1533,11 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
           )}
 
           <div style={{ display: "flex", gap: 10 }}>
-            <button type="submit" className="ledger-btn">
+            <button
+              type="submit"
+              className="ledger-btn"
+              onMouseDown={(e) => e.preventDefault()}
+            >
               {editingId ? "Save changes" : "Add entry"}
             </button>
             {editingId && (
