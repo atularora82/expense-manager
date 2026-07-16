@@ -217,6 +217,61 @@ function resolveFormCategory(type, categoryId) {
   return list.some((c) => c.id === categoryId) ? categoryId : list[0].id;
 }
 
+function CollapsiblePanel({ title, meta, open, onToggle, children }) {
+  return (
+    <div
+      style={{
+        background: "#FFFDF8",
+        border: "1px solid #D8CDB4",
+        borderRadius: 8,
+        marginBottom: 28,
+        overflow: "hidden",
+      }}
+    >
+      <button
+        type="button"
+        onClick={onToggle}
+        style={{
+          width: "100%",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: 12,
+          padding: "14px 18px",
+          background: "none",
+          border: "none",
+          cursor: "pointer",
+          textAlign: "left",
+        }}
+      >
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div
+            style={{
+              fontFamily: "'Fraunces', serif",
+              fontSize: 15,
+              fontWeight: 600,
+              color: "#1F2A22",
+            }}
+          >
+            {title}
+          </div>
+          {meta && (
+            <div style={{ fontSize: 12.5, color: "#74836A", marginTop: 3 }}>{meta}</div>
+          )}
+        </div>
+        <span style={{ fontSize: 12, color: "#74836A", flexShrink: 0 }}>
+          {open ? "Hide" : "Show"}
+        </span>
+      </button>
+      {open && (
+        <div style={{ borderTop: "1px dashed #E4DCC5", padding: "12px 18px 16px" }}>
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
   const [entries, setEntries] = useState([]);
   const [loaded, setLoaded] = useState(false);
@@ -258,11 +313,16 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
   const [importPreview, setImportPreview] = useState(null);
   const [backupNote, setBackupNote] = useState("");
   const [showRecurring, setShowRecurring] = useState(false);
+  const [showExpenseDetails, setShowExpenseDetails] = useState(true);
+  const [showInvestmentDetails, setShowInvestmentDetails] = useState(true);
+  const [showIncomeDetails, setShowIncomeDetails] = useState(false);
   const importInputRef = useRef(null);
   const backupInputRef = useRef(null);
   const searchInputRef = useRef(null);
   const categoryRef = useRef(category);
   categoryRef.current = category;
+  const categoryRulesRef = useRef(categoryRules);
+  categoryRulesRef.current = categoryRules;
   const recognitionRef = React.useRef(null);
   const voiceSupported =
     typeof window !== "undefined" &&
@@ -397,14 +457,20 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
     }
   }, [loaded, recurringLoaded, recurring.length]);
 
+  useEffect(() => {
+    if (!loaded || !rulesLoaded) return;
+    if (Object.keys(categoryRules).length > 0 || entries.length === 0) return;
+    learnCategoryRulesFromEntries(entries);
+  }, [loaded, rulesLoaded, entries.length]);
+
   function learnCategoryRulesFromEntries(list) {
-    setCategoryRules((prev) => {
-      let next = prev;
-      for (const en of list) {
-        next = saveCategoryRule(next, en.description, en.type, en.category);
-      }
-      return next;
-    });
+    const next = list.reduce(
+      (rules, en) =>
+        saveCategoryRule(rules, en.description, en.type, en.category),
+      categoryRulesRef.current
+    );
+    categoryRulesRef.current = next;
+    setCategoryRules(next);
   }
 
   function resetForm() {
@@ -421,10 +487,13 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
 
   function switchFormType(t) {
     setFormType(t);
-    setCategory(catsForType(t)[0].id);
     setCategoryLocked(false);
     setFormRecurring(t === "investment");
     setFormError("");
+    const nextCategory = desc.trim()
+      ? resolveCategory(desc, t, categoryRulesRef.current)
+      : catsForType(t)[0].id;
+    setCategory(nextCategory);
   }
 
   function handleSubmit(e) {
@@ -440,9 +509,14 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
     }
     const trimmedDesc = desc.trim();
     const savedCategory = resolveFormCategory(formType, categoryRef.current);
-    setCategoryRules((prev) =>
-      saveCategoryRule(prev, trimmedDesc, formType, savedCategory)
+    const nextRules = saveCategoryRule(
+      categoryRulesRef.current,
+      trimmedDesc,
+      formType,
+      savedCategory
     );
+    categoryRulesRef.current = nextRules;
+    setCategoryRules(nextRules);
 
     if (editingId) {
       setEntries((prev) =>
@@ -492,8 +566,8 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
 
   function suggestCategoryFromDesc(value) {
     if (categoryLocked || !value.trim()) return;
-    const matched = lookupCategoryRule(categoryRules, value, formType);
-    if (matched) setCategory(matched);
+    const matched = resolveCategory(value, formType, categoryRulesRef.current);
+    setCategory(matched);
   }
 
   function handleDescChange(value) {
@@ -503,7 +577,8 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
 
   function handleCategoryChange(value) {
     setCategory(value);
-    setCategoryLocked(true);
+    // Only lock when overriding after description was entered
+    if (desc.trim()) setCategoryLocked(true);
   }
 
   function deleteRecurring(id) {
@@ -662,6 +737,139 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
     search,
     globalSearchActive,
   ]);
+
+  const expenseEntries = useMemo(
+    () => displayEntries.filter((e) => e.type === "expense"),
+    [displayEntries]
+  );
+  const investmentEntries = useMemo(
+    () => displayEntries.filter((e) => e.type === "investment"),
+    [displayEntries]
+  );
+  const incomeEntries = useMemo(
+    () => displayEntries.filter((e) => e.type === "income"),
+    [displayEntries]
+  );
+
+  function renderEntryRows(list) {
+    if (list.length === 0) {
+      return (
+        <div style={{ fontSize: 13, color: "#74836A", padding: "8px 0" }}>
+          No entries in this section for the current view.
+        </div>
+      );
+    }
+    return (
+      <div
+        style={{
+          border: "1px solid #D8CDB4",
+          borderRadius: 8,
+          overflow: "hidden",
+          background: "#FFFDF8",
+        }}
+      >
+        {list.map((en, i) => {
+          const cat = catInfoFor(en.type, en.category);
+          const isIncome = en.type === "income";
+          const isInvestment = en.type === "investment";
+          const amountColor = isIncome
+            ? "#2F6B4F"
+            : isInvestment
+            ? "#4A5A91"
+            : "#1F2A22";
+          const amountPrefix = isIncome ? "+" : isInvestment ? "↗" : "-";
+          return (
+            <div
+              key={en.id}
+              className="row-hover"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 14,
+                padding: "13px 18px",
+                borderTop: i === 0 ? "none" : "1px dashed #E4DCC5",
+              }}
+            >
+              <div
+                style={{
+                  fontFamily: "'IBM Plex Mono', monospace",
+                  fontSize: 12,
+                  color: "#74836A",
+                  width: globalSearchActive ? 88 : 46,
+                  flexShrink: 0,
+                }}
+              >
+                {globalSearchActive ? fmtDateFull(en.date) : fmtDate(en.date)}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div
+                  style={{
+                    fontSize: 14,
+                    color: "#1F2A22",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {en.description}
+                </div>
+              </div>
+              <div
+                className="cat-stamp"
+                style={{ color: cat.color, borderColor: cat.color }}
+              >
+                {cat.label}
+              </div>
+              <div
+                style={{
+                  fontFamily: "'IBM Plex Mono', monospace",
+                  fontSize: 14,
+                  fontWeight: 600,
+                  color: amountColor,
+                  width: 90,
+                  textAlign: "right",
+                  flexShrink: 0,
+                }}
+              >
+                {amountPrefix}
+                {fmtMoney(en.amount)}
+              </div>
+              <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+                <button
+                  onClick={() => handleEdit(en)}
+                  title="Edit"
+                  style={{
+                    background: "none",
+                    border: "none",
+                    cursor: "pointer",
+                    color: "#74836A",
+                    fontSize: 13,
+                    padding: 4,
+                  }}
+                >
+                  Edit
+                </button>
+                <button
+                  onClick={() => handleDelete(en.id)}
+                  title="Delete"
+                  style={{
+                    background: "none",
+                    border: "none",
+                    cursor: "pointer",
+                    color: "#A93B3B",
+                    fontSize: 13,
+                    padding: 4,
+                  }}
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
 
   const globalSearchTotals = useMemo(() => {
     if (!globalSearchActive) return null;
@@ -2049,180 +2257,272 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
           </div>
         )}
 
-        {/* Category breakdown */}
-        {!globalSearchActive && periodMode === "year" && monthlyExpenseTotals.length > 0 && (
-          <div style={{ marginBottom: 28 }}>
-            <div
-              style={{
-                fontSize: 11,
-                fontWeight: 600,
-                letterSpacing: "0.1em",
-                textTransform: "uppercase",
-                color: "#74836A",
-                marginBottom: 10,
-              }}
+        {(catTotals.length > 0 ||
+          expenseEntries.length > 0 ||
+          (!globalSearchActive &&
+            periodMode === "year" &&
+            monthlyExpenseTotals.length > 0)) &&
+          (filterType === "all" || filterType === "expense") && (
+            <CollapsiblePanel
+              title="Expense details"
+              meta={`${fmtMoney(periodExpenseTotal)} · ${expenseEntries.length} entr${expenseEntries.length === 1 ? "y" : "ies"} · ${periodLabel}`}
+              open={showExpenseDetails}
+              onToggle={() => setShowExpenseDetails((v) => !v)}
             >
-              Month-over-month spending &mdash; {year}
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {monthlyExpenseTotals.map((m) => (
-                <div
-                  key={m.ym}
-                  style={{ display: "flex", alignItems: "center", gap: 10 }}
-                >
-                  <div style={{ width: 72, fontSize: 12.5, color: "#1F2A22" }}>
-                    {m.label}
-                  </div>
-                  <div
-                    style={{
-                      flex: 1,
-                      background: "#EDE6D6",
-                      height: 8,
-                      borderRadius: 4,
-                      overflow: "hidden",
-                    }}
-                  >
+              {!globalSearchActive &&
+                periodMode === "year" &&
+                monthlyExpenseTotals.length > 0 && (
+                  <div style={{ marginBottom: 16 }}>
                     <div
                       style={{
-                        width: `${(m.total / maxMonthlyTotal) * 100}%`,
-                        background: "#3C6E91",
-                        height: "100%",
-                        borderRadius: 4,
+                        fontSize: 11,
+                        fontWeight: 600,
+                        letterSpacing: "0.1em",
+                        textTransform: "uppercase",
+                        color: "#74836A",
+                        marginBottom: 10,
                       }}
-                    />
+                    >
+                      Month-over-month spending &mdash; {year}
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      {monthlyExpenseTotals.map((m) => (
+                        <div
+                          key={m.ym}
+                          style={{ display: "flex", alignItems: "center", gap: 10 }}
+                        >
+                          <div style={{ width: 72, fontSize: 12.5, color: "#1F2A22" }}>
+                            {m.label}
+                          </div>
+                          <div
+                            style={{
+                              flex: 1,
+                              background: "#EDE6D6",
+                              height: 8,
+                              borderRadius: 4,
+                              overflow: "hidden",
+                            }}
+                          >
+                            <div
+                              style={{
+                                width: `${(m.total / maxMonthlyTotal) * 100}%`,
+                                background: "#3C6E91",
+                                height: "100%",
+                                borderRadius: 4,
+                              }}
+                            />
+                          </div>
+                          <div
+                            style={{
+                              fontFamily: "'IBM Plex Mono', monospace",
+                              fontSize: 12.5,
+                              width: 70,
+                              textAlign: "right",
+                              color: "#1F2A22",
+                            }}
+                          >
+                            {fmtMoney(m.total)}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
+                )}
+
+              {catTotals.length > 0 && !globalSearchActive && (
+                <div style={{ marginBottom: 16 }}>
                   <div
                     style={{
-                      fontFamily: "'IBM Plex Mono', monospace",
-                      fontSize: 12.5,
-                      width: 70,
-                      textAlign: "right",
-                      color: "#1F2A22",
+                      fontSize: 11,
+                      fontWeight: 600,
+                      letterSpacing: "0.1em",
+                      textTransform: "uppercase",
+                      color: "#74836A",
+                      marginBottom: 10,
                     }}
                   >
-                    {fmtMoney(m.total)}
+                    Spending by category
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {catTotals.map((c) => (
+                      <div
+                        key={c.id}
+                        style={{ display: "flex", alignItems: "center", gap: 10 }}
+                      >
+                        <div style={{ width: 118, fontSize: 12.5, color: "#1F2A22" }}>
+                          {c.label}
+                        </div>
+                        <div
+                          style={{
+                            flex: 1,
+                            background: "#EDE6D6",
+                            height: 8,
+                            borderRadius: 4,
+                            overflow: "hidden",
+                          }}
+                        >
+                          <div
+                            style={{
+                              width: `${(c.total / maxCatTotal) * 100}%`,
+                              background: c.color,
+                              height: "100%",
+                              borderRadius: 4,
+                            }}
+                          />
+                        </div>
+                        <div
+                          style={{
+                            fontFamily: "'IBM Plex Mono', monospace",
+                            fontSize: 12.5,
+                            width: 70,
+                            textAlign: "right",
+                            color: "#1F2A22",
+                          }}
+                        >
+                          {fmtMoney(c.total)}
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
-              ))}
-            </div>
+              )}
+
+              <div
+                style={{
+                  fontSize: 11,
+                  fontWeight: 600,
+                  letterSpacing: "0.1em",
+                  textTransform: "uppercase",
+                  color: "#74836A",
+                  marginBottom: 10,
+                }}
+              >
+                Expense entries
+              </div>
+              {renderEntryRows(expenseEntries)}
+            </CollapsiblePanel>
+          )}
+
+        {(investmentTotals.length > 0 || investmentEntries.length > 0) &&
+          (filterType === "all" || filterType === "investment") && (
+            <CollapsiblePanel
+              title="Investment details"
+              meta={`${fmtMoney(periodInvestmentTotal)} · ${investmentEntries.length} entr${investmentEntries.length === 1 ? "y" : "ies"} · ${periodLabel}`}
+              open={showInvestmentDetails}
+              onToggle={() => setShowInvestmentDetails((v) => !v)}
+            >
+              {investmentTotals.length > 0 && !globalSearchActive && (
+                <div style={{ marginBottom: 16 }}>
+                  <div
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 600,
+                      letterSpacing: "0.1em",
+                      textTransform: "uppercase",
+                      color: "#74836A",
+                      marginBottom: 10,
+                    }}
+                  >
+                    Investments by type
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {investmentTotals.map((c) => (
+                      <div
+                        key={c.id}
+                        style={{ display: "flex", alignItems: "center", gap: 10 }}
+                      >
+                        <div style={{ width: 118, fontSize: 12.5, color: "#1F2A22" }}>
+                          {c.label}
+                        </div>
+                        <div
+                          style={{
+                            flex: 1,
+                            background: "#EDE6D6",
+                            height: 8,
+                            borderRadius: 4,
+                            overflow: "hidden",
+                          }}
+                        >
+                          <div
+                            style={{
+                              width: `${(c.total / maxInvestmentTotal) * 100}%`,
+                              background: c.color,
+                              height: "100%",
+                              borderRadius: 4,
+                            }}
+                          />
+                        </div>
+                        <div
+                          style={{
+                            fontFamily: "'IBM Plex Mono', monospace",
+                            fontSize: 12.5,
+                            width: 70,
+                            textAlign: "right",
+                            color: "#1F2A22",
+                          }}
+                        >
+                          {fmtMoney(c.total)}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div
+                style={{
+                  fontSize: 11,
+                  fontWeight: 600,
+                  letterSpacing: "0.1em",
+                  textTransform: "uppercase",
+                  color: "#74836A",
+                  marginBottom: 10,
+                }}
+              >
+                Investment entries
+              </div>
+              {renderEntryRows(investmentEntries)}
+            </CollapsiblePanel>
+          )}
+
+        {incomeEntries.length > 0 &&
+          (filterType === "all" || filterType === "income") && (
+            <CollapsiblePanel
+              title="Income details"
+              meta={`${fmtMoney(periodIncomeTotal)} · ${incomeEntries.length} entr${incomeEntries.length === 1 ? "y" : "ies"} · ${periodLabel}`}
+              open={showIncomeDetails}
+              onToggle={() => setShowIncomeDetails((v) => !v)}
+            >
+              {renderEntryRows(incomeEntries)}
+            </CollapsiblePanel>
+          )}
+
+        {!loaded && (
+          <div style={{ color: "#74836A", fontSize: 14, padding: "20px 0" }}>
+            Loading your ledger...
           </div>
         )}
 
-        {catTotals.length > 0 && !globalSearchActive && (
-          <div style={{ marginBottom: 28 }}>
+        {loaded &&
+          expenseEntries.length === 0 &&
+          investmentEntries.length === 0 &&
+          incomeEntries.length === 0 && (
             <div
               style={{
-                fontSize: 11,
-                fontWeight: 600,
-                letterSpacing: "0.1em",
-                textTransform: "uppercase",
+                border: "1px dashed #D8CDB4",
+                borderRadius: 8,
+                padding: "40px 20px",
+                textAlign: "center",
                 color: "#74836A",
-                marginBottom: 10,
+                fontSize: 14,
+                marginBottom: 28,
               }}
             >
-              Spending by category &mdash; {periodLabel}
+              {globalSearchActive
+                ? `No entries match "${search.trim()}". Try another keyword or clear search.`
+                : "No entries yet for this view. Add one above to start the ledger."}
             </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {catTotals.map((c) => (
-                <div
-                  key={c.id}
-                  style={{ display: "flex", alignItems: "center", gap: 10 }}
-                >
-                  <div style={{ width: 118, fontSize: 12.5, color: "#1F2A22" }}>
-                    {c.label}
-                  </div>
-                  <div
-                    style={{
-                      flex: 1,
-                      background: "#EDE6D6",
-                      height: 8,
-                      borderRadius: 4,
-                      overflow: "hidden",
-                    }}
-                  >
-                    <div
-                      style={{
-                        width: `${(c.total / maxCatTotal) * 100}%`,
-                        background: c.color,
-                        height: "100%",
-                        borderRadius: 4,
-                      }}
-                    />
-                  </div>
-                  <div
-                    style={{
-                      fontFamily: "'IBM Plex Mono', monospace",
-                      fontSize: 12.5,
-                      width: 70,
-                      textAlign: "right",
-                      color: "#1F2A22",
-                    }}
-                  >
-                    {fmtMoney(c.total)}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {investmentTotals.length > 0 && !globalSearchActive && (
-          <div style={{ marginBottom: 28 }}>
-            <div
-              style={{
-                fontSize: 11,
-                fontWeight: 600,
-                letterSpacing: "0.1em",
-                textTransform: "uppercase",
-                color: "#74836A",
-                marginBottom: 10,
-              }}
-            >
-              Investments by type &mdash; {periodLabel}
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {investmentTotals.map((c) => (
-                <div
-                  key={c.id}
-                  style={{ display: "flex", alignItems: "center", gap: 10 }}
-                >
-                  <div style={{ width: 118, fontSize: 12.5, color: "#1F2A22" }}>
-                    {c.label}
-                  </div>
-                  <div
-                    style={{
-                      flex: 1,
-                      background: "#EDE6D6",
-                      height: 8,
-                      borderRadius: 4,
-                      overflow: "hidden",
-                    }}
-                  >
-                    <div
-                      style={{
-                        width: `${(c.total / maxInvestmentTotal) * 100}%`,
-                        background: c.color,
-                        height: "100%",
-                        borderRadius: 4,
-                      }}
-                    />
-                  </div>
-                  <div
-                    style={{
-                      fontFamily: "'IBM Plex Mono', monospace",
-                      fontSize: 12.5,
-                      width: 70,
-                      textAlign: "right",
-                      color: "#1F2A22",
-                    }}
-                  >
-                    {fmtMoney(c.total)}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+          )}
 
         {/* Category rules */}
         {categoryRuleList.length > 0 && (
@@ -2400,155 +2700,6 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
             {periodMode === "year" && " Year view shows spending totals only."}
           </div>
         ) : null}
-
-        {/* Ledger list */}
-        <div
-          style={{
-            fontSize: 11,
-            fontWeight: 600,
-            letterSpacing: "0.1em",
-            textTransform: "uppercase",
-            color: "#74836A",
-            marginBottom: 10,
-          }}
-        >
-          Entries ({displayEntries.length})
-          {globalSearchActive && (
-            <span style={{ fontWeight: 500, color: "#3C6E91", marginLeft: 8 }}>
-              all time
-            </span>
-          )}
-        </div>
-
-        {!loaded ? (
-          <div style={{ color: "#74836A", fontSize: 14, padding: "20px 0" }}>
-            Loading your ledger...
-          </div>
-        ) : displayEntries.length === 0 ? (
-          <div
-            style={{
-              border: "1px dashed #D8CDB4",
-              borderRadius: 8,
-              padding: "40px 20px",
-              textAlign: "center",
-              color: "#74836A",
-              fontSize: 14,
-            }}
-          >
-            {globalSearchActive
-              ? `No entries match "${search.trim()}". Try another keyword or clear search.`
-              : "No entries yet for this view. Add one above to start the ledger."}
-          </div>
-        ) : (
-          <div
-            style={{
-              border: "1px solid #D8CDB4",
-              borderRadius: 8,
-              overflow: "hidden",
-              background: "#FFFDF8",
-            }}
-          >
-            {displayEntries.map((en, i) => {
-              const cat = catInfoFor(en.type, en.category);
-              const isIncome = en.type === "income";
-              const isInvestment = en.type === "investment";
-              const amountColor = isIncome
-                ? "#2F6B4F"
-                : isInvestment
-                ? "#4A5A91"
-                : "#1F2A22";
-              const amountPrefix = isIncome ? "+" : isInvestment ? "↗" : "-";
-              return (
-                <div
-                  key={en.id}
-                  className="row-hover"
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 14,
-                    padding: "13px 18px",
-                    borderTop: i === 0 ? "none" : "1px dashed #E4DCC5",
-                  }}
-                >
-                  <div
-                    style={{
-                      fontFamily: "'IBM Plex Mono', monospace",
-                      fontSize: 12,
-                      color: "#74836A",
-                      width: globalSearchActive ? 88 : 46,
-                      flexShrink: 0,
-                    }}
-                  >
-                    {globalSearchActive ? fmtDateFull(en.date) : fmtDate(en.date)}
-                  </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div
-                      style={{
-                        fontSize: 14,
-                        color: "#1F2A22",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {en.description}
-                    </div>
-                  </div>
-                  <div
-                    className="cat-stamp"
-                    style={{ color: cat.color, borderColor: cat.color }}
-                  >
-                    {cat.label}
-                  </div>
-                  <div
-                    style={{
-                      fontFamily: "'IBM Plex Mono', monospace",
-                      fontSize: 14,
-                      fontWeight: 600,
-                      color: amountColor,
-                      width: 90,
-                      textAlign: "right",
-                      flexShrink: 0,
-                    }}
-                  >
-                    {amountPrefix}
-                    {fmtMoney(en.amount)}
-                  </div>
-                  <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
-                    <button
-                      onClick={() => handleEdit(en)}
-                      title="Edit"
-                      style={{
-                        background: "none",
-                        border: "none",
-                        cursor: "pointer",
-                        color: "#74836A",
-                        fontSize: 13,
-                        padding: 4,
-                      }}
-                    >
-                      Edit
-                    </button>
-                    <button
-                      onClick={() => handleDelete(en.id)}
-                      title="Delete"
-                      style={{
-                        background: "none",
-                        border: "none",
-                        cursor: "pointer",
-                        color: "#A93B3B",
-                        fontSize: 13,
-                        padding: 4,
-                      }}
-                    >
-                      Delete
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
 
         {saveError && (
           <div style={{ marginTop: 16, fontSize: 12.5, color: "#A93B3B" }}>
