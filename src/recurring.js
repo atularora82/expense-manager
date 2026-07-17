@@ -2,6 +2,13 @@ function pad(n) {
   return String(n).padStart(2, "0");
 }
 
+function localISODate(d) {
+  const y = d.getFullYear();
+  const m = pad(d.getMonth() + 1);
+  const day = pad(d.getDate());
+  return `${y}-${m}-${day}`;
+}
+
 function monthEndDay(year, month) {
   return new Date(year, month, 0).getDate();
 }
@@ -51,7 +58,7 @@ export function getWeeklyOccurrences(item, fromDate, toDate) {
     const jsDow = cur.getDay();
     const monBased = jsDow === 0 ? 7 : jsDow;
     if (monBased === targetDow) {
-      const dateStr = cur.toISOString().slice(0, 10);
+      const dateStr = localISODate(cur);
       if (dateStr >= fromDate) dates.push(dateStr);
     }
     cur.setDate(cur.getDate() + 1);

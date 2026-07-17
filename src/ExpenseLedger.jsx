@@ -13,6 +13,7 @@ import {
   detectInvestmentCategory,
 } from "./investments.js";
 import { filterEntriesGlobal } from "./globalSearch.js";
+import { findDateAmountDuplicates } from "./duplicates.js";
 
 const CATEGORIES = [
   { id: "food", label: "Food & Dining", color: "#A93B3B" },
@@ -55,9 +56,15 @@ function catInfoFor(type, id) {
   return catMap[id];
 }
 
+function localISODate(d = new Date()) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
 function todayStr() {
-  const d = new Date();
-  return d.toISOString().slice(0, 10);
+  return localISODate(new Date());
 }
 
 function monthLabel(ym) {
@@ -87,11 +94,6 @@ function fmtMoney(n) {
   );
 }
 
-function fmtDate(iso) {
-  const d = new Date(iso + "T00:00:00");
-  return d.toLocaleDateString("en-IN", { month: "short", day: "2-digit" });
-}
-
 function fmtDateFull(iso) {
   const d = new Date(iso + "T00:00:00");
   return d.toLocaleDateString("en-IN", {
@@ -101,12 +103,22 @@ function fmtDateFull(iso) {
   });
 }
 
+function formatTransactionDate(iso) {
+  if (!iso) return "";
+  return new Date(iso + "T00:00:00").toLocaleDateString("en-IN", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
 function uid() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 }
 
 function toISODate(d) {
-  return d.toISOString().slice(0, 10);
+  return localISODate(d);
 }
 
 function startOfWeek(dateStr) {
@@ -294,6 +306,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
   const [formRecurring, setFormRecurring] = useState(false);
   const [formRecurringFreq, setFormRecurringFreq] = useState("monthly");
   const [categoryLocked, setCategoryLocked] = useState(false);
+  const [duplicateBypass, setDuplicateBypass] = useState(false);
   const [formError, setFormError] = useState("");
   const [editingId, setEditingId] = useState(null);
 
@@ -481,6 +494,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
     setFormRecurring(false);
     setFormRecurringFreq("monthly");
     setCategoryLocked(false);
+    setDuplicateBypass(false);
     setEditingId(null);
     setFormError("");
   }
@@ -488,6 +502,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
   function switchFormType(t) {
     setFormType(t);
     setCategoryLocked(false);
+    setDuplicateBypass(false);
     setFormRecurring(t === "investment");
     setFormError("");
     const nextCategory = desc.trim()
@@ -508,6 +523,15 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
       return;
     }
     const trimmedDesc = desc.trim();
+    const duplicates = findDateAmountDuplicates(entries, {
+      date,
+      amount: num,
+      excludeId: editingId,
+    });
+    if (duplicates.length > 0 && !duplicateBypass) {
+      setFormError("");
+      return;
+    }
     const savedCategory = resolveFormCategory(formType, categoryRef.current);
     const nextRules = saveCategoryRule(
       categoryRulesRef.current,
@@ -527,7 +551,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                 amount: num,
                 description: trimmedDesc,
                 category: savedCategory,
-                date,
+                date: date || todayStr(),
                 type: formType,
               }
             : en
@@ -540,7 +564,8 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
         amount: num,
         description: trimmedDesc,
         category: savedCategory,
-        date,
+        date: date || todayStr(),
+        recordedAt: new Date().toISOString(),
       };
       setEntries((prev) => [newEntry, ...prev]);
 
@@ -562,6 +587,30 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
       }
     }
     resetForm();
+  }
+
+  const duplicateMatches = useMemo(() => {
+    const num = parseFloat(amount);
+    if (!date || !amount || isNaN(num) || num <= 0) return [];
+    return findDateAmountDuplicates(entries, {
+      date,
+      amount: num,
+      excludeId: editingId,
+    });
+  }, [entries, date, amount, editingId]);
+
+  useEffect(() => {
+    if (duplicateMatches.length === 0) setDuplicateBypass(false);
+  }, [duplicateMatches.length, date, amount]);
+
+  function handleAmountChange(value) {
+    setAmount(value);
+    setDuplicateBypass(false);
+  }
+
+  function handleDateChange(value) {
+    setDate(value);
+    setDuplicateBypass(false);
   }
 
   function suggestCategoryFromDesc(value) {
@@ -602,6 +651,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
     setDate(en.date);
     setFormRecurring(false);
     setCategoryLocked(true);
+    setDuplicateBypass(false);
     setFormError("");
   }
 
@@ -795,11 +845,17 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                   fontFamily: "'IBM Plex Mono', monospace",
                   fontSize: 12,
                   color: "#74836A",
-                  width: globalSearchActive ? 88 : 46,
+                  width: 92,
                   flexShrink: 0,
+                  lineHeight: 1.3,
                 }}
               >
-                {globalSearchActive ? fmtDateFull(en.date) : fmtDate(en.date)}
+                <div>{fmtDateFull(en.date)}</div>
+                {en.recordedAt && en.date !== en.recordedAt.slice(0, 10) && (
+                  <div style={{ fontSize: 10, color: "#A69C82", marginTop: 2 }}>
+                    Logged {fmtDateFull(en.recordedAt.slice(0, 10))}
+                  </div>
+                )}
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div
@@ -1607,7 +1663,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                 min="0"
                 placeholder=""
                 value={amount}
-                onChange={(e) => setAmount(e.target.value)}
+                onChange={(e) => handleAmountChange(e.target.value)}
               />
             </div>
             <div>
@@ -1622,14 +1678,47 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                   marginBottom: 5,
                 }}
               >
-                Date
+                Transaction date
               </label>
               <input
                 className="ledger-input"
                 type="date"
                 value={date}
-                onChange={(e) => setDate(e.target.value)}
+                onChange={(e) => handleDateChange(e.target.value)}
               />
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  gap: 8,
+                  marginTop: 5,
+                }}
+              >
+                <span style={{ fontSize: 12, color: "#74836A" }}>
+                  {formatTransactionDate(date)}
+                  {date === todayStr() && (
+                    <span style={{ color: "#2F6B4F", fontWeight: 600 }}> · Today</span>
+                  )}
+                </span>
+                {date !== todayStr() && !editingId && (
+                  <button
+                    type="button"
+                    onClick={() => handleDateChange(todayStr())}
+                    style={{
+                      background: "none",
+                      border: "none",
+                      cursor: "pointer",
+                      color: "#3C6E91",
+                      fontSize: 11.5,
+                      fontWeight: 600,
+                      padding: 0,
+                    }}
+                  >
+                    Use today
+                  </button>
+                )}
+              </div>
             </div>
             <div>
               <label
@@ -1734,6 +1823,65 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
             </div>
           )}
 
+          {duplicateMatches.length > 0 && (
+            <div
+              style={{
+                fontSize: 13,
+                color: "#8B5E34",
+                background: "#FBF3E6",
+                border: "1px solid #E4C88A",
+                borderRadius: 4,
+                padding: "10px 12px",
+                marginBottom: 12,
+              }}
+            >
+              <div style={{ fontWeight: 600, marginBottom: 6 }}>
+                Possible duplicate
+              </div>
+              <div style={{ color: "#4A5A4E", marginBottom: 8 }}>
+                {fmtMoney(parseFloat(amount))} on {formatTransactionDate(date)}{" "}
+                matches {duplicateMatches.length} existing entr
+                {duplicateMatches.length === 1 ? "y" : "ies"}:
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                {duplicateMatches.slice(0, 3).map((en) => {
+                  const cat = catInfoFor(en.type, en.category);
+                  return (
+                    <div key={en.id} style={{ fontSize: 12.5, color: "#1F2A22" }}>
+                      &bull; {en.description}
+                      {cat?.label ? ` (${cat.label})` : ""} &mdash; {en.type}
+                    </div>
+                  );
+                })}
+                {duplicateMatches.length > 3 && (
+                  <div style={{ fontSize: 12, color: "#74836A" }}>
+                    + {duplicateMatches.length - 3} more
+                  </div>
+                )}
+              </div>
+              {!duplicateBypass ? (
+                <button
+                  type="button"
+                  className="ledger-btn ledger-btn-ghost"
+                  style={{
+                    marginTop: 10,
+                    textTransform: "none",
+                    letterSpacing: "normal",
+                    fontWeight: 500,
+                    padding: "8px 12px",
+                  }}
+                  onClick={() => setDuplicateBypass(true)}
+                >
+                  Add anyway
+                </button>
+              ) : (
+                <div style={{ fontSize: 12, color: "#74836A", marginTop: 8 }}>
+                  Duplicate acknowledged &mdash; click Add entry to save.
+                </div>
+              )}
+            </div>
+          )}
+
           {formError && (
             <div style={{ color: "#A93B3B", fontSize: 13, marginBottom: 12 }}>
               {formError}
@@ -1746,7 +1894,11 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
               className="ledger-btn"
               onMouseDown={(e) => e.preventDefault()}
             >
-              {editingId ? "Save changes" : "Add entry"}
+              {editingId
+                ? "Save changes"
+                : duplicateMatches.length > 0 && duplicateBypass
+                ? "Add entry anyway"
+                : "Add entry"}
             </button>
             {editingId && (
               <button
