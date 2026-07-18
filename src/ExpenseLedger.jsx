@@ -1,6 +1,14 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { parseExcelFile } from "./excelImport.js";
 import {
+  readStatementFile,
+  resolveColumnMapping,
+  columnSignature,
+  parseStatementWithMapping,
+  mappingIsValid,
+  STATEMENT_MAP_FIELDS,
+} from "./statementImport.js";
+import {
   lookupCategoryRule,
   saveCategoryRule,
   removeCategoryRule,
@@ -8,12 +16,34 @@ import {
 import { processRecurringItems } from "./recurring.js";
 import { createBackup, downloadBackup, parseBackupFile } from "./backup.js";
 import {
+  BACKUP_SCHEDULE_KEY,
+  BACKUP_FREQUENCIES,
+  normalizeBackupSchedule,
+  shouldRunScheduledBackup,
+  formatLastBackup,
+  markBackupCompleted,
+} from "./backupSchedule.js";
+import {
+  runGoogleDriveBackup,
+  userHasGoogleProvider,
+} from "./googleDriveBackup.js";
+import { auth, googleProvider } from "./firebase.js";
+import {
   INVESTMENT_CATEGORIES,
   investmentCatMap,
   detectInvestmentCategory,
 } from "./investments.js";
 import { filterEntriesGlobal } from "./globalSearch.js";
 import { findDateAmountDuplicates } from "./duplicates.js";
+import {
+  createImportPreviewState,
+  updateImportPreviewRow,
+  setAllImportPreviewIncluded,
+  getImportPreviewStats,
+  buildEntriesFromPreview,
+  getRowValidationError,
+} from "./importPreview.js";
+import { isStorageNotFoundError, parseStoredJson } from "./storageUtils.js";
 
 const CATEGORIES = [
   { id: "food", label: "Food & Dining", color: "#A93B3B" },
@@ -229,7 +259,7 @@ function resolveFormCategory(type, categoryId) {
   return list.some((c) => c.id === categoryId) ? categoryId : list[0].id;
 }
 
-function CollapsiblePanel({ title, meta, open, onToggle, children }) {
+function CollapsiblePanel({ title, meta, open, onToggle, hideToggle = false, children }) {
   return (
     <div
       style={{
@@ -242,7 +272,7 @@ function CollapsiblePanel({ title, meta, open, onToggle, children }) {
     >
       <button
         type="button"
-        onClick={onToggle}
+        onClick={hideToggle ? undefined : onToggle}
         style={{
           width: "100%",
           display: "flex",
@@ -252,7 +282,7 @@ function CollapsiblePanel({ title, meta, open, onToggle, children }) {
           padding: "14px 18px",
           background: "none",
           border: "none",
-          cursor: "pointer",
+          cursor: hideToggle ? "default" : "pointer",
           textAlign: "left",
         }}
       >
@@ -271,9 +301,11 @@ function CollapsiblePanel({ title, meta, open, onToggle, children }) {
             <div style={{ fontSize: 12.5, color: "#74836A", marginTop: 3 }}>{meta}</div>
           )}
         </div>
-        <span style={{ fontSize: 12, color: "#74836A", flexShrink: 0 }}>
-          {open ? "Hide" : "Show"}
-        </span>
+        {!hideToggle && (
+          <span style={{ fontSize: 12, color: "#74836A", flexShrink: 0 }}>
+            {open ? "Hide" : "Show"}
+          </span>
+        )}
       </button>
       {open && (
         <div style={{ borderTop: "1px dashed #E4DCC5", padding: "12px 18px 16px" }}>
@@ -287,6 +319,8 @@ function CollapsiblePanel({ title, meta, open, onToggle, children }) {
 export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
   const [entries, setEntries] = useState([]);
   const [loaded, setLoaded] = useState(false);
+  const [storageHydrated, setStorageHydrated] = useState(false);
+  const [loadError, setLoadError] = useState("");
   const [saveError, setSaveError] = useState(false);
 
   const [budgets, setBudgets] = useState({});
@@ -324,12 +358,23 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
   const [voiceNote, setVoiceNote] = useState("");
   const [importNote, setImportNote] = useState("");
   const [importPreview, setImportPreview] = useState(null);
+  const [statementImport, setStatementImport] = useState(null);
+  const [statementProfiles, setStatementProfiles] = useState({});
+  const [profilesLoaded, setProfilesLoaded] = useState(false);
+  const [statementDragActive, setStatementDragActive] = useState(false);
+  const [showManualEntry, setShowManualEntry] = useState(false);
   const [backupNote, setBackupNote] = useState("");
+  const [backupSchedule, setBackupSchedule] = useState(() => normalizeBackupSchedule());
+  const [backupScheduleLoaded, setBackupScheduleLoaded] = useState(false);
+  const [driveBackupBusy, setDriveBackupBusy] = useState(false);
+  const [showDriveBackup, setShowDriveBackup] = useState(false);
+  const driveBackupRanRef = useRef(false);
   const [showRecurring, setShowRecurring] = useState(false);
   const [showExpenseDetails, setShowExpenseDetails] = useState(true);
   const [showInvestmentDetails, setShowInvestmentDetails] = useState(true);
   const [showIncomeDetails, setShowIncomeDetails] = useState(false);
   const importInputRef = useRef(null);
+  const statementInputRef = useRef(null);
   const backupInputRef = useRef(null);
   const searchInputRef = useRef(null);
   const categoryRef = useRef(category);
@@ -342,77 +387,107 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
     (window.SpeechRecognition || window.webkitSpeechRecognition);
 
   useEffect(() => {
-    (async () => {
+    let cancelled = false;
+
+    async function readKey(key) {
       try {
-        const res = await window.storage.get("ledger-entries");
-        if (res && res.value) {
-          const parsed = JSON.parse(res.value).map((e) => ({
-            type: "expense",
-            ...e,
-          }));
-          setEntries(parsed);
+        const res = await window.storage.get(key);
+        return { ok: true, value: res?.value ?? null };
+      } catch (error) {
+        if (isStorageNotFoundError(error)) {
+          return { ok: true, value: null };
         }
-      } catch (e) {
-        // no existing data yet
-      } finally {
+        return { ok: false, value: null, error };
+      }
+    }
+
+    (async () => {
+      const [
+        entriesResult,
+        budgetsResult,
+        recurringResult,
+        profilesResult,
+        rulesResult,
+        scheduleResult,
+      ] = await Promise.all([
+        readKey("ledger-entries"),
+        readKey("ledger-budgets"),
+        readKey("ledger-recurring"),
+        readKey("ledger-statement-profiles"),
+        readKey("ledger-category-rules"),
+        readKey(BACKUP_SCHEDULE_KEY),
+      ]);
+
+      if (cancelled) return;
+
+      if (!entriesResult.ok) {
+        setLoadError(
+          "Could not load your ledger from cloud sync. Edits are paused so your cloud data is not overwritten."
+        );
         setLoaded(true);
-      }
-    })();
-    (async () => {
-      try {
-        const res = await window.storage.get("ledger-budgets");
-        if (res && res.value) {
-          setBudgets(JSON.parse(res.value));
-        }
-      } catch (e) {
-        // no budgets set yet
-      } finally {
         setBudgetsLoaded(true);
-      }
-    })();
-    (async () => {
-      try {
-        const res = await window.storage.get("ledger-recurring");
-        if (res && res.value) {
-          setRecurring(JSON.parse(res.value));
-        }
-      } catch (e) {
-        // no recurring set yet
-      } finally {
         setRecurringLoaded(true);
-      }
-    })();
-    (async () => {
-      try {
-        const res = await window.storage.get("ledger-category-rules");
-        if (res && res.value) {
-          setCategoryRules(JSON.parse(res.value));
-        }
-      } catch (e) {
-        // no rules set yet
-      } finally {
+        setProfilesLoaded(true);
         setRulesLoaded(true);
+        setBackupScheduleLoaded(true);
+        return;
       }
+
+      if (entriesResult.value) {
+        const parsed = parseStoredJson(entriesResult.value, []).map((e) => ({
+          type: "expense",
+          ...e,
+        }));
+        setEntries(parsed);
+      }
+
+      if (budgetsResult.ok && budgetsResult.value) {
+        setBudgets(parseStoredJson(budgetsResult.value, {}));
+      }
+      if (recurringResult.ok && recurringResult.value) {
+        setRecurring(parseStoredJson(recurringResult.value, []));
+      }
+      if (profilesResult.ok && profilesResult.value) {
+        const parsed = parseStoredJson(profilesResult.value, {});
+        if (parsed && typeof parsed === "object") {
+          setStatementProfiles(parsed);
+        }
+      }
+      if (rulesResult.ok && rulesResult.value) {
+        setCategoryRules(parseStoredJson(rulesResult.value, {}));
+      }
+      if (scheduleResult.ok && scheduleResult.value) {
+        setBackupSchedule(normalizeBackupSchedule(parseStoredJson(scheduleResult.value, {})));
+      }
+
+      setLoaded(true);
+      setBudgetsLoaded(true);
+      setRecurringLoaded(true);
+      setProfilesLoaded(true);
+      setRulesLoaded(true);
+      setBackupScheduleLoaded(true);
+      setStorageHydrated(true);
     })();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
-    if (!loaded) return;
+    if (!storageHydrated) return;
     (async () => {
       try {
-        const result = await window.storage.set(
-          "ledger-entries",
-          JSON.stringify(entries)
-        );
-        setSaveError(!result);
+        await window.storage.set("ledger-entries", JSON.stringify(entries));
+        setSaveError(false);
       } catch (e) {
         setSaveError(true);
       }
     })();
-  }, [entries, loaded]);
+  }, [entries, storageHydrated]);
 
   useEffect(() => {
-    if (!budgetsLoaded) return;
+    if (!storageHydrated || !budgetsLoaded) return;
     (async () => {
       try {
         await window.storage.set("ledger-budgets", JSON.stringify(budgets));
@@ -423,7 +498,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
   }, [budgets, budgetsLoaded]);
 
   useEffect(() => {
-    if (!recurringLoaded) return;
+    if (!storageHydrated || !recurringLoaded) return;
     (async () => {
       try {
         await window.storage.set("ledger-recurring", JSON.stringify(recurring));
@@ -434,7 +509,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
   }, [recurring, recurringLoaded]);
 
   useEffect(() => {
-    if (!rulesLoaded) return;
+    if (!storageHydrated || !rulesLoaded) return;
     (async () => {
       try {
         await window.storage.set(
@@ -445,7 +520,25 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
         // ignore
       }
     })();
-  }, [categoryRules, rulesLoaded]);
+  }, [categoryRules, rulesLoaded, storageHydrated]);
+
+  useEffect(() => {
+    if (!storageHydrated || !backupScheduleLoaded) return;
+    (async () => {
+      try {
+        await window.storage.set(
+          BACKUP_SCHEDULE_KEY,
+          JSON.stringify(backupSchedule)
+        );
+      } catch (e) {
+        // ignore
+      }
+    })();
+  }, [backupSchedule, backupScheduleLoaded, storageHydrated]);
+
+  useEffect(() => {
+    if (editingId) setShowManualEntry(true);
+  }, [editingId]);
 
   useEffect(() => {
     function onKeyDown(e) {
@@ -463,7 +556,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
   }, []);
 
   useEffect(() => {
-    if (!loaded || !recurringLoaded || recurring.length === 0) return;
+    if (!storageHydrated || !loaded || !recurringLoaded || recurring.length === 0) return;
     const generated = processRecurringItems(recurring, entries, todayStr());
     if (generated.length > 0) {
       setEntries((prev) => [...generated, ...prev]);
@@ -496,6 +589,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
     setCategoryLocked(false);
     setDuplicateBypass(false);
     setEditingId(null);
+    setShowManualEntry(false);
     setFormError("");
   }
 
@@ -1045,6 +1139,90 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
     return budgets[id] ? String(budgets[id]) : "";
   }
 
+  async function persistStatementProfile(columns, mapping) {
+    if (!mappingIsValid(mapping) || !storageHydrated) return;
+    const signature = columnSignature(columns);
+    setStatementProfiles((prev) => {
+      const next = { ...prev, [signature]: mapping };
+      window.storage
+        .set("ledger-statement-profiles", JSON.stringify(next))
+        .catch(() => {});
+      return next;
+    });
+  }
+
+  async function processStatementFile(file) {
+    if (!file) return;
+
+    setImportNote("");
+    try {
+      const { columns, rows, fileName } = await readStatementFile(file);
+      if (rows.length === 0) {
+        setImportNote("Statement file is empty.");
+        return;
+      }
+      const mapping = resolveColumnMapping(columns, statementProfiles);
+      setStatementImport({
+        fileName,
+        columns,
+        rows,
+        mapping,
+        mappingRemembered:
+          profilesLoaded &&
+          Boolean(statementProfiles[columnSignature(columns)]),
+      });
+    } catch (err) {
+      setImportNote(err.message || "Could not read the statement file.");
+      console.error(err);
+    }
+  }
+
+  async function handleStatementFile(e) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    await processStatementFile(file);
+  }
+
+  function handleStatementDrop(e) {
+    e.preventDefault();
+    setStatementDragActive(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) processStatementFile(file);
+  }
+
+  function updateStatementMapping(field, column) {
+    setStatementImport((prev) =>
+      prev
+        ? {
+            ...prev,
+            mapping: { ...prev.mapping, [field]: column },
+          }
+        : prev
+    );
+  }
+
+  function handleStatementPreview() {
+    if (!statementImport) return;
+    const result = parseStatementWithMapping(
+      statementImport.rows,
+      statementImport.mapping,
+      entries,
+      categoryRulesRef.current
+    );
+    if (result.rows.length === 0 && result.errors.length === 0) {
+      setImportNote("No transactions found with the current column mapping.");
+      return;
+    }
+    persistStatementProfile(statementImport.columns, statementImport.mapping);
+    setImportPreview(
+      createImportPreviewState(result, {
+        fileName: statementImport.fileName,
+        source: "statement",
+      })
+    );
+    setStatementImport(null);
+  }
+
   async function handleImportFile(e) {
     const file = e.target.files?.[0];
     e.target.value = "";
@@ -1053,45 +1231,159 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
     setImportNote("");
     try {
       const result = await parseExcelFile(file, entries, categoryRules);
-      if (result.entries.length === 0 && result.errors.length === 0) {
+      if (result.rows.length === 0 && result.errors.length === 0) {
         setImportNote("No rows found to import.");
         return;
       }
-      setImportPreview({ ...result, fileName: file.name });
+      setImportPreview(createImportPreviewState(result, { fileName: file.name }));
     } catch (err) {
       setImportNote("Import failed. Check that the file matches the IDL format.");
       console.error(err);
     }
   }
 
+  function patchImportPreviewRow(previewId, patch) {
+    setImportPreview((prev) => {
+      if (!prev) return prev;
+      let rows = updateImportPreviewRow(prev.rows, previewId, patch);
+      if (patch.type) {
+        rows = rows.map((row) => {
+          if (row.previewId !== previewId) return row;
+          const cats = catsForType(row.type);
+          if (!cats.some((c) => c.id === row.category)) {
+            return { ...row, category: cats[0].id };
+          }
+          return row;
+        });
+      }
+      return { ...prev, rows };
+    });
+  }
+
+  function setAllImportRowsIncluded(included) {
+    setImportPreview((prev) =>
+      prev
+        ? { ...prev, rows: setAllImportPreviewIncluded(prev.rows, included) }
+        : prev
+    );
+  }
+
   function confirmImport() {
     if (!importPreview) return;
-    const { entries: imported, errors, skipped } = importPreview;
+    const imported = buildEntriesFromPreview(importPreview.rows);
     if (imported.length > 0) {
       setEntries((prev) => [...imported, ...prev]);
       learnCategoryRulesFromEntries(imported);
     }
+    const stats = getImportPreviewStats(importPreview.rows);
     const parts = [];
     if (imported.length > 0) {
       parts.push(`Imported ${imported.length} entr${imported.length === 1 ? "y" : "ies"}`);
     }
-    if (skipped > 0) {
-      parts.push(`skipped ${skipped} duplicate${skipped === 1 ? "" : "s"}`);
+    if (stats.included > imported.length) {
+      parts.push(
+        `${stats.included - imported.length} selected row${stats.included - imported.length === 1 ? "" : "s"} skipped (invalid fields)`
+      );
     }
-    if (errors.length > 0) {
-      parts.push(`${errors.length} row${errors.length === 1 ? "" : "s"} skipped due to errors`);
+    if (stats.total - stats.included > 0) {
+      parts.push(`${stats.total - stats.included} excluded`);
+    }
+    if (importPreview.errors.length > 0) {
+      parts.push(
+        `${importPreview.errors.length} source row${importPreview.errors.length === 1 ? "" : "s"} could not be parsed`
+      );
     }
     setImportNote(parts.length ? parts.join("; ") + "." : "Nothing imported.");
-    if (errors.length > 0) console.warn("Excel import errors:", errors);
+    if (importPreview.errors.length > 0) {
+      console.warn("Import parse errors:", importPreview.errors);
+    }
     setImportPreview(null);
   }
 
+  function buildCurrentBackup() {
+    return createBackup({ entries, budgets, recurring, categoryRules });
+  }
+
   function exportBackup() {
-    downloadBackup(
-      createBackup({ entries, budgets, recurring, categoryRules })
-    );
+    downloadBackup(buildCurrentBackup());
     setBackupNote("Full backup downloaded.");
   }
+
+  async function runDriveBackup({ manual = false, forceAuth = false } = {}) {
+    if (!cloudSync || !userHasGoogleProvider(user)) {
+      setBackupNote("Sign in with Google to back up to Drive.");
+      return false;
+    }
+    if (driveBackupBusy) return false;
+
+    setDriveBackupBusy(true);
+    if (manual) setBackupNote("");
+    try {
+      const result = await runGoogleDriveBackup({
+        auth,
+        googleProvider,
+        backup: buildCurrentBackup(),
+        schedule: backupSchedule,
+        forceAuth,
+      });
+      const nextSchedule = markBackupCompleted({
+        ...backupSchedule,
+        driveFolderId: result.folderId,
+      });
+      setBackupSchedule(nextSchedule);
+      setBackupNote(
+        manual
+          ? `Backup saved to Google Drive (${result.uploaded.name}).`
+          : `Scheduled backup saved to Google Drive (${result.uploaded.name}).`
+      );
+      return true;
+    } catch (err) {
+      const message = err?.message || "Google Drive backup failed.";
+      setBackupNote(manual ? message : `Scheduled backup skipped: ${message}`);
+      console.error(err);
+      return false;
+    } finally {
+      setDriveBackupBusy(false);
+    }
+  }
+
+  async function enableDriveBackupSchedule() {
+    if (!cloudSync || !userHasGoogleProvider(user)) {
+      setBackupNote("Sign in with Google to use scheduled Drive backup.");
+      return;
+    }
+    const ok = await runDriveBackup({ manual: true, forceAuth: true });
+    if (ok) {
+      setBackupSchedule((prev) => ({ ...prev, enabled: true }));
+    }
+  }
+
+  useEffect(() => {
+    if (
+      !storageHydrated ||
+      !backupScheduleLoaded ||
+      !cloudSync ||
+      !userHasGoogleProvider(user) ||
+      !backupSchedule.enabled
+    ) {
+      return;
+    }
+    if (!shouldRunScheduledBackup(backupSchedule)) return;
+    if (driveBackupRanRef.current) return;
+
+    driveBackupRanRef.current = true;
+    runDriveBackup({ manual: false }).then((ok) => {
+      if (!ok) driveBackupRanRef.current = false;
+    });
+  }, [
+    storageHydrated,
+    backupScheduleLoaded,
+    cloudSync,
+    user,
+    backupSchedule.enabled,
+    backupSchedule.lastBackupAt,
+    backupSchedule.frequency,
+  ]);
 
   async function handleRestoreBackup(e) {
     const file = e.target.files?.[0];
@@ -1153,6 +1445,11 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
     return null;
   }, [filterType]);
 
+  const importPreviewStats = useMemo(
+    () => (importPreview ? getImportPreviewStats(importPreview.rows) : null),
+    [importPreview]
+  );
+
   return (
     <div
       style={{
@@ -1206,6 +1503,45 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
           border: 1px solid #D8CDB4;
         }
         .ledger-btn-ghost:hover { background: #EDE6D6; opacity: 1; }
+        .import-preview-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+        .import-preview-table th {
+          position: sticky;
+          top: 0;
+          background: #F6F1E6;
+          z-index: 1;
+          text-align: left;
+          font-size: 10px;
+          font-weight: 600;
+          letter-spacing: 0.06em;
+          text-transform: uppercase;
+          color: #74836A;
+          padding: 8px 6px;
+          border-bottom: 1px solid #D8CDB4;
+        }
+        .import-preview-table td {
+          padding: 6px;
+          border-bottom: 1px dashed #E4DCC5;
+          vertical-align: middle;
+        }
+        .import-preview-table tr.row-excluded td { opacity: 0.45; }
+        .import-preview-table tr.row-duplicate td { background: #FBF6EA; }
+        .import-preview-table tr.row-invalid td { background: #FDF0F0; }
+        .import-preview-input {
+          font-family: 'Inter', sans-serif;
+          background: #FFFDF8;
+          border: 1px solid #D8CDB4;
+          border-radius: 4px;
+          padding: 6px 8px;
+          font-size: 12.5px;
+          color: #1F2A22;
+          width: 100%;
+          outline: none;
+        }
+        .import-preview-input:focus {
+          border-color: #C08A28;
+          box-shadow: 0 0 0 2px rgba(192,138,40,0.12);
+        }
+        .import-preview-check { width: 16px; height: 16px; cursor: pointer; }
         .seg-btn {
           font-family: 'Inter', sans-serif;
           font-size: 12.5px;
@@ -1500,29 +1836,161 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
           )}
         </div>
 
-        {/* Add / edit entry - receipt slip */}
-        <form
-          onSubmit={handleSubmit}
+        <input
+          ref={statementInputRef}
+          type="file"
+          accept=".xlsx,.xls,.csv"
+          style={{ display: "none" }}
+          onChange={handleStatementFile}
+        />
+        <input
+          ref={importInputRef}
+          type="file"
+          accept=".xlsx,.xls,.csv"
+          style={{ display: "none" }}
+          onChange={handleImportFile}
+        />
+
+        {/* Primary input: bank statement import */}
+        <div
+          onDragOver={(e) => {
+            e.preventDefault();
+            setStatementDragActive(true);
+          }}
+          onDragLeave={() => setStatementDragActive(false)}
+          onDrop={handleStatementDrop}
           style={{
-            background: "#FFFDF8",
-            border: "1px solid #D8CDB4",
+            background: statementDragActive ? "#F0EBDD" : "#FFFDF8",
+            border: statementDragActive
+              ? "2px dashed #2F6B4F"
+              : "2px solid #1F2A22",
             borderRadius: 8,
-            padding: "22px 24px",
+            padding: "24px 26px",
             marginBottom: 28,
-            position: "relative",
+            transition: "background 0.15s, border-color 0.15s",
           }}
         >
           <div
             style={{
-              position: "absolute",
-              top: -1,
-              left: 18,
-              right: 18,
-              height: 0,
-              borderTop: "1px dashed #C9BE9F",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "flex-start",
+              gap: 20,
+              flexWrap: "wrap",
             }}
-          />
+          >
+            <div style={{ flex: 1, minWidth: 240 }}>
+              <div
+                style={{
+                  fontSize: 11,
+                  fontWeight: 600,
+                  letterSpacing: "0.12em",
+                  textTransform: "uppercase",
+                  color: "#2F6B4F",
+                  marginBottom: 6,
+                }}
+              >
+                Primary input
+              </div>
+              <div
+                style={{
+                  fontFamily: "'Fraunces', serif",
+                  fontSize: 20,
+                  fontWeight: 600,
+                  color: "#1F2A22",
+                  marginBottom: 8,
+                }}
+              >
+                Import bank statement
+              </div>
+              <div style={{ fontSize: 13.5, color: "#74836A", lineHeight: 1.55 }}>
+                Download your monthly statement as CSV or Excel, then import it here.
+                Debits become expenses, credits become income, and saved category
+                rules apply automatically.
+              </div>
+            </div>
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "flex-start",
+                gap: 10,
+                flexShrink: 0,
+              }}
+            >
+              <button
+                type="button"
+                className="ledger-btn"
+                style={{
+                  textTransform: "none",
+                  letterSpacing: "normal",
+                  fontWeight: 600,
+                  padding: "12px 20px",
+                }}
+                onClick={() => statementInputRef.current?.click()}
+              >
+                Choose statement file
+              </button>
+              <button
+                type="button"
+                onClick={() => importInputRef.current?.click()}
+                style={{
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  color: "#3C6E91",
+                  fontSize: 12.5,
+                  fontWeight: 500,
+                  padding: 0,
+                }}
+              >
+                Import Excel (legacy format)
+              </button>
+            </div>
+          </div>
+          <div
+            style={{
+              marginTop: 14,
+              fontSize: 12,
+              color: statementDragActive ? "#2F6B4F" : "#74836A",
+            }}
+          >
+            {statementDragActive
+              ? "Drop your statement file here"
+              : "Or drag and drop a .csv, .xlsx, or .xls file"}
+          </div>
+        </div>
+        {importNote && (
+          <div
+            style={{
+              fontSize: 12.5,
+              color: "#3C6E91",
+              marginTop: -20,
+              marginBottom: 28,
+            }}
+          >
+            {importNote}
+          </div>
+        )}
 
+        {/* Manual entry — collapsed by default; statement import is primary */}
+        <CollapsiblePanel
+          title={editingId ? "Edit entry" : "Manual entry"}
+          meta={
+            editingId
+              ? undefined
+              : "Cash, one-offs, investments, or corrections"
+          }
+          open={editingId || showManualEntry}
+          hideToggle={Boolean(editingId)}
+          onToggle={() => setShowManualEntry((v) => !v)}
+        >
+        <form
+          onSubmit={handleSubmit}
+          style={{
+            position: "relative",
+          }}
+        >
           <div
             style={{
               display: "flex",
@@ -1533,18 +2001,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
               gap: 10,
             }}
           >
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <div
-                style={{
-                  fontFamily: "'Fraunces', serif",
-                  fontSize: 16,
-                  fontWeight: 600,
-                  color: "#1F2A22",
-                }}
-              >
-                {editingId ? "Edit entry" : "New entry"}
-              </div>
-              <div style={{ display: "flex" }}>
+            <div style={{ display: "flex" }}>
                 <button
                   type="button"
                   className={`seg-btn ${formType === "expense" ? "active" : ""}`}
@@ -1569,7 +2026,6 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                 >
                   Investment
                 </button>
-              </div>
             </div>
             <button
               type="button"
@@ -1911,6 +2367,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
             )}
           </div>
         </form>
+        </CollapsiblePanel>
 
         {/* Recurring entries */}
         <div
@@ -2213,21 +2670,6 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
               </>
             )}
           </select>
-          <input
-            ref={importInputRef}
-            type="file"
-            accept=".xlsx,.xls,.csv"
-            style={{ display: "none" }}
-            onChange={handleImportFile}
-          />
-          <button
-            type="button"
-            className="ledger-btn ledger-btn-ghost"
-            style={{ textTransform: "none", letterSpacing: "normal", fontWeight: 500 }}
-            onClick={() => importInputRef.current?.click()}
-          >
-            Import Excel
-          </button>
           <button
             type="button"
             className="ledger-btn ledger-btn-ghost"
@@ -2261,7 +2703,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
             Restore
           </button>
         </div>
-        {(importNote || backupNote) && (
+        {backupNote && (
           <div
             style={{
               fontSize: 12.5,
@@ -2270,14 +2712,123 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
               marginBottom: 20,
             }}
           >
-            {[importNote, backupNote].filter(Boolean).join(" ")}
+            {backupNote}
           </div>
         )}
 
-        {importPreview && (
-          <div className="ledger-modal-backdrop" onClick={() => setImportPreview(null)}>
+        {cloudSync && (
+          <CollapsiblePanel
+            title="Google Drive backup"
+            meta={
+              backupSchedule.enabled
+                ? `${BACKUP_FREQUENCIES.find((f) => f.id === backupSchedule.frequency)?.label || "Daily"} schedule · Last: ${formatLastBackup(backupSchedule.lastBackupAt)}`
+                : "Schedule automatic backups to your Google Drive"
+            }
+            open={showDriveBackup}
+            onToggle={() => setShowDriveBackup((v) => !v)}
+          >
+            {!userHasGoogleProvider(user) ? (
+              <div style={{ fontSize: 13.5, color: "#74836A", lineHeight: 1.55 }}>
+                Scheduled Drive backup requires signing in with Google. Email/password
+                accounts can still use local Backup / Restore.
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                <label
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                    fontSize: 13.5,
+                    color: "#1F2A22",
+                    cursor: driveBackupBusy ? "wait" : "pointer",
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={backupSchedule.enabled}
+                    disabled={driveBackupBusy}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        enableDriveBackupSchedule();
+                      } else {
+                        setBackupSchedule((prev) => ({ ...prev, enabled: false }));
+                      }
+                    }}
+                  />
+                  Enable scheduled backup to Google Drive
+                </label>
+
+                <div>
+                  <label
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 600,
+                      color: "#74836A",
+                      textTransform: "uppercase",
+                      letterSpacing: "0.06em",
+                      display: "block",
+                      marginBottom: 5,
+                    }}
+                  >
+                    Frequency
+                  </label>
+                  <select
+                    className="ledger-select"
+                    style={{ maxWidth: 180 }}
+                    value={backupSchedule.frequency}
+                    disabled={!backupSchedule.enabled || driveBackupBusy}
+                    onChange={(e) =>
+                      setBackupSchedule((prev) => ({
+                        ...prev,
+                        frequency: e.target.value,
+                      }))
+                    }
+                  >
+                    {BACKUP_FREQUENCIES.map((freq) => (
+                      <option key={freq.id} value={freq.id}>
+                        {freq.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div style={{ fontSize: 13, color: "#74836A", lineHeight: 1.55 }}>
+                  Backups are saved to the <strong>Expense Book Backups</strong> folder in
+                  your Google Drive when you open the app. The last 14 backups are kept.
+                  <div style={{ marginTop: 6 }}>
+                    Last backup: {formatLastBackup(backupSchedule.lastBackupAt)}
+                  </div>
+                </div>
+
+                <div>
+                  <button
+                    type="button"
+                    className="ledger-btn ledger-btn-ghost"
+                    style={{
+                      textTransform: "none",
+                      letterSpacing: "normal",
+                      fontWeight: 500,
+                    }}
+                    disabled={driveBackupBusy}
+                    onClick={() => runDriveBackup({ manual: true, forceAuth: true })}
+                  >
+                    {driveBackupBusy ? "Uploading..." : "Backup to Drive now"}
+                  </button>
+                </div>
+              </div>
+            )}
+          </CollapsiblePanel>
+        )}
+
+        {statementImport && (
+          <div
+            className="ledger-modal-backdrop"
+            onClick={() => setStatementImport(null)}
+          >
             <div
               className="ledger-modal"
+              style={{ maxWidth: 520 }}
               onClick={(e) => e.stopPropagation()}
             >
               <div
@@ -2288,84 +2839,345 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                   marginBottom: 8,
                 }}
               >
-                Import preview
+                Map statement columns
               </div>
               <div style={{ fontSize: 13, color: "#74836A", marginBottom: 16 }}>
-                {importPreview.fileName} &mdash; {importPreview.entries.length} to import
-                {importPreview.skipped > 0 &&
-                  `, ${importPreview.skipped} duplicate${importPreview.skipped === 1 ? "" : "s"} skipped`}
-                {importPreview.errors.length > 0 &&
-                  `, ${importPreview.errors.length} error${importPreview.errors.length === 1 ? "" : "s"}`}
+                {statementImport.fileName} &mdash; {statementImport.rows.length} rows
+                {statementImport.mappingRemembered && (
+                  <span style={{ color: "#2F6B4F", fontWeight: 600 }}>
+                    {" "}
+                    &middot; Using saved column mapping
+                  </span>
+                )}
               </div>
-              {importPreview.entries.length > 0 && (
-                <div
-                  style={{
-                    border: "1px solid #D8CDB4",
-                    borderRadius: 6,
-                    overflow: "hidden",
-                    marginBottom: 12,
-                    maxHeight: 240,
-                    overflowY: "auto",
-                  }}
-                >
-                  {importPreview.entries.slice(0, 15).map((en, i) => {
-                    const cat = catInfoFor(en.type, en.category);
-                    return (
-                      <div
-                        key={en.id}
-                        style={{
-                          display: "flex",
-                          gap: 10,
-                          padding: "8px 12px",
-                          fontSize: 12.5,
-                          borderTop: i === 0 ? "none" : "1px dashed #E4DCC5",
-                        }}
-                      >
-                        <span style={{ color: "#74836A", width: 72 }}>{en.date}</span>
-                        <span style={{ flex: 1 }}>{en.description}</span>
-                        <span style={{ color: "#74836A" }}>{cat?.label}</span>
-                        <span
-                          style={{
-                            fontFamily: "'IBM Plex Mono', monospace",
-                            fontWeight: 600,
-                          }}
-                        >
-                          {fmtMoney(en.amount)}
-                        </span>
-                      </div>
-                    );
-                  })}
-                  {importPreview.entries.length > 15 && (
-                    <div style={{ padding: "8px 12px", fontSize: 12, color: "#74836A" }}>
-                      + {importPreview.entries.length - 15} more rows
-                    </div>
-                  )}
+              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                {STATEMENT_MAP_FIELDS.map((field) => (
+                  <div key={field.id}>
+                    <label
+                      style={{
+                        fontSize: 11,
+                        fontWeight: 600,
+                        color: "#74836A",
+                        textTransform: "uppercase",
+                        letterSpacing: "0.06em",
+                        display: "block",
+                        marginBottom: 5,
+                      }}
+                    >
+                      {field.label}
+                      {field.required ? " *" : ""}
+                    </label>
+                    <select
+                      className="ledger-select"
+                      value={statementImport.mapping[field.id] || ""}
+                      onChange={(e) =>
+                        updateStatementMapping(field.id, e.target.value)
+                      }
+                    >
+                      <option value="">
+                        {field.required ? "Select column" : "Not used"}
+                      </option>
+                      {statementImport.columns.map((col) => (
+                        <option key={col} value={col}>
+                          {col}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ))}
+              </div>
+              <div style={{ fontSize: 12, color: "#74836A", marginTop: 14 }}>
+                Debits become expenses; credits become income. Category rules apply
+                automatically.
+              </div>
+              {!mappingIsValid(statementImport.mapping) && (
+                <div style={{ fontSize: 12.5, color: "#A93B3B", marginTop: 10 }}>
+                  Map Date, Description, and at least one amount column.
                 </div>
               )}
+              <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
+                <button
+                  type="button"
+                  className="ledger-btn"
+                  onClick={handleStatementPreview}
+                  disabled={!mappingIsValid(statementImport.mapping)}
+                >
+                  Preview import
+                </button>
+                <button
+                  type="button"
+                  className="ledger-btn ledger-btn-ghost"
+                  onClick={() => setStatementImport(null)}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {importPreview && importPreviewStats && (
+          <div className="ledger-modal-backdrop" onClick={() => setImportPreview(null)}>
+            <div
+              className="ledger-modal"
+              style={{
+                maxWidth: 980,
+                width: "95vw",
+                maxHeight: "90vh",
+                display: "flex",
+                flexDirection: "column",
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div
+                style={{
+                  fontFamily: "'Fraunces', serif",
+                  fontSize: 18,
+                  fontWeight: 600,
+                  marginBottom: 8,
+                }}
+              >
+                {importPreview.source === "statement"
+                  ? "Review statement import"
+                  : "Review import"}
+              </div>
+              <div style={{ fontSize: 13, color: "#74836A", marginBottom: 12 }}>
+                {importPreview.fileName} &mdash; {importPreviewStats.total} record
+                {importPreviewStats.total === 1 ? "" : "s"} found,{" "}
+                {importPreviewStats.included} selected, {importPreviewStats.importable} ready
+                {importPreviewStats.duplicates > 0 &&
+                  ` (${importPreviewStats.duplicates} duplicate${importPreviewStats.duplicates === 1 ? "" : "s"} unchecked by default)`}
+                {importPreviewStats.invalidIncluded > 0 && (
+                  <span style={{ color: "#A93B3B" }}>
+                    {" "}
+                    &middot; {importPreviewStats.invalidIncluded} selected row
+                    {importPreviewStats.invalidIncluded === 1 ? "" : "s"} need fixes
+                  </span>
+                )}
+              </div>
+
+              {importPreview.rows.length > 0 && (
+                <>
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: 10,
+                      marginBottom: 10,
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    <button
+                      type="button"
+                      className="ledger-btn ledger-btn-ghost"
+                      style={{
+                        textTransform: "none",
+                        letterSpacing: "normal",
+                        fontWeight: 500,
+                        padding: "7px 12px",
+                      }}
+                      onClick={() => setAllImportRowsIncluded(true)}
+                    >
+                      Select all
+                    </button>
+                    <button
+                      type="button"
+                      className="ledger-btn ledger-btn-ghost"
+                      style={{
+                        textTransform: "none",
+                        letterSpacing: "normal",
+                        fontWeight: 500,
+                        padding: "7px 12px",
+                      }}
+                      onClick={() => setAllImportRowsIncluded(false)}
+                    >
+                      Exclude all
+                    </button>
+                  </div>
+                  <div
+                    style={{
+                      border: "1px solid #D8CDB4",
+                      borderRadius: 6,
+                      overflow: "auto",
+                      marginBottom: 12,
+                      flex: 1,
+                      minHeight: 240,
+                      maxHeight: "52vh",
+                      background: "#FFFDF8",
+                    }}
+                  >
+                    <table className="import-preview-table">
+                      <thead>
+                        <tr>
+                          <th style={{ width: 36 }}>In</th>
+                          <th style={{ width: 118 }}>Date</th>
+                          <th style={{ width: 96 }}>Type</th>
+                          <th>Description</th>
+                          <th style={{ width: 150 }}>Category</th>
+                          <th style={{ width: 96 }}>Amount</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {importPreview.rows.map((row) => {
+                          const rowError =
+                            row.included && getRowValidationError(row);
+                          const rowClass = [
+                            !row.included ? "row-excluded" : "",
+                            row.isDuplicate && row.included ? "row-duplicate" : "",
+                            rowError ? "row-invalid" : "",
+                          ]
+                            .filter(Boolean)
+                            .join(" ");
+                          return (
+                            <tr key={row.previewId} className={rowClass}>
+                              <td>
+                                <input
+                                  type="checkbox"
+                                  className="import-preview-check"
+                                  checked={row.included}
+                                  onChange={(e) =>
+                                    patchImportPreviewRow(row.previewId, {
+                                      included: e.target.checked,
+                                    })
+                                  }
+                                  aria-label={`Include ${row.description}`}
+                                />
+                              </td>
+                              <td>
+                                <input
+                                  className="import-preview-input"
+                                  type="date"
+                                  value={row.date || ""}
+                                  onChange={(e) =>
+                                    patchImportPreviewRow(row.previewId, {
+                                      date: e.target.value,
+                                    })
+                                  }
+                                />
+                              </td>
+                              <td>
+                                <select
+                                  className="import-preview-input"
+                                  value={row.type}
+                                  onChange={(e) =>
+                                    patchImportPreviewRow(row.previewId, {
+                                      type: e.target.value,
+                                    })
+                                  }
+                                >
+                                  <option value="expense">Expense</option>
+                                  <option value="income">Income</option>
+                                  <option value="investment">Investment</option>
+                                </select>
+                              </td>
+                              <td>
+                                <input
+                                  className="import-preview-input"
+                                  type="text"
+                                  value={row.description}
+                                  onChange={(e) =>
+                                    patchImportPreviewRow(row.previewId, {
+                                      description: e.target.value,
+                                    })
+                                  }
+                                />
+                                {row.isDuplicate && (
+                                  <div
+                                    style={{
+                                      fontSize: 10.5,
+                                      color: "#8B5E34",
+                                      marginTop: 3,
+                                    }}
+                                  >
+                                    Matches existing ledger entry
+                                  </div>
+                                )}
+                                {rowError && (
+                                  <div
+                                    style={{
+                                      fontSize: 10.5,
+                                      color: "#A93B3B",
+                                      marginTop: 3,
+                                    }}
+                                  >
+                                    {rowError}
+                                  </div>
+                                )}
+                              </td>
+                              <td>
+                                <select
+                                  className="import-preview-input"
+                                  value={row.category}
+                                  onChange={(e) =>
+                                    patchImportPreviewRow(row.previewId, {
+                                      category: e.target.value,
+                                    })
+                                  }
+                                >
+                                  {catsForType(row.type).map((c) => (
+                                    <option key={c.id} value={c.id}>
+                                      {c.label}
+                                    </option>
+                                  ))}
+                                </select>
+                              </td>
+                              <td>
+                                <input
+                                  className="import-preview-input"
+                                  type="number"
+                                  step="0.01"
+                                  min="0"
+                                  value={row.amount}
+                                  onChange={(e) =>
+                                    patchImportPreviewRow(row.previewId, {
+                                      amount: e.target.value,
+                                    })
+                                  }
+                                  style={{
+                                    fontFamily: "'IBM Plex Mono', monospace",
+                                  }}
+                                />
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+
               {importPreview.errors.length > 0 && (
                 <div
                   style={{
                     fontSize: 12,
                     color: "#A93B3B",
                     marginBottom: 12,
-                    maxHeight: 80,
+                    maxHeight: 100,
                     overflowY: "auto",
+                    border: "1px solid #E4C88A",
+                    background: "#FBF3E6",
+                    borderRadius: 6,
+                    padding: "10px 12px",
                   }}
                 >
-                  {importPreview.errors.slice(0, 5).map((err) => (
+                  <div style={{ fontWeight: 600, marginBottom: 6 }}>
+                    Rows that could not be parsed
+                  </div>
+                  {importPreview.errors.map((err) => (
                     <div key={err}>{err}</div>
                   ))}
                 </div>
               )}
-              <div style={{ display: "flex", gap: 10 }}>
+
+              <div style={{ display: "flex", gap: 10, flexShrink: 0 }}>
                 <button
                   type="button"
                   className="ledger-btn"
                   onClick={confirmImport}
-                  disabled={importPreview.entries.length === 0}
+                  disabled={importPreviewStats.importable === 0}
                 >
-                  Import {importPreview.entries.length} entr
-                  {importPreview.entries.length === 1 ? "y" : "ies"}
+                  Import {importPreviewStats.importable} entr
+                  {importPreviewStats.importable === 1 ? "y" : "ies"}
                 </button>
                 <button
                   type="button"
@@ -2672,7 +3484,25 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
             >
               {globalSearchActive
                 ? `No entries match "${search.trim()}". Try another keyword or clear search.`
-                : "No entries yet for this view. Add one above to start the ledger."}
+                : entries.length === 0
+                ? "No transactions yet. Import your bank statement to populate the ledger."
+                : "No entries for this period or filter."}
+              {!globalSearchActive && entries.length === 0 && (
+                <div style={{ marginTop: 16 }}>
+                  <button
+                    type="button"
+                    className="ledger-btn"
+                    style={{
+                      textTransform: "none",
+                      letterSpacing: "normal",
+                      fontWeight: 600,
+                    }}
+                    onClick={() => statementInputRef.current?.click()}
+                  >
+                    Choose statement file
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
@@ -2852,6 +3682,22 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
             {periodMode === "year" && " Year view shows spending totals only."}
           </div>
         ) : null}
+
+        {loadError && (
+          <div
+            style={{
+              marginBottom: 20,
+              padding: "12px 14px",
+              borderRadius: 6,
+              border: "1px solid #E4C88A",
+              background: "#FBF3E6",
+              color: "#8B5E34",
+              fontSize: 13,
+            }}
+          >
+            {loadError}
+          </div>
+        )}
 
         {saveError && (
           <div style={{ marginTop: 16, fontSize: 12.5, color: "#A93B3B" }}>

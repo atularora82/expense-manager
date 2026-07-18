@@ -77,11 +77,43 @@ function parseAmount(value) {
   return Number.isFinite(num) && num > 0 ? num : null;
 }
 
+function expandTwoDigitYear(yy) {
+  const n = Number(yy);
+  if (!Number.isFinite(n)) return null;
+  if (n >= 100) return n;
+  return n >= 70 ? 1900 + n : 2000 + n;
+}
+
+function toISODateFromParts(dayStr, monthStr, yearStr) {
+  const day = Number(dayStr);
+  const month = Number(monthStr);
+  const year =
+    String(yearStr).length <= 2 ? expandTwoDigitYear(yearStr) : Number(yearStr);
+  if (!Number.isFinite(day) || !Number.isFinite(month) || !Number.isFinite(year)) {
+    return null;
+  }
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+
+  const date = new Date(year, month - 1, day);
+  if (
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day
+  ) {
+    return null;
+  }
+
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
 function parseExcelDate(value) {
   if (value == null || value === "") return null;
 
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    return value.toISOString().slice(0, 10);
+    const y = value.getFullYear();
+    const m = String(value.getMonth() + 1).padStart(2, "0");
+    const d = String(value.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
   }
 
   if (typeof value === "number") {
@@ -95,16 +127,31 @@ function parseExcelDate(value) {
   }
 
   const str = String(value).trim();
-  const ddmmyyyy = str.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
+
+  const ddmmyyyy = str.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/);
   if (ddmmyyyy) {
-    const [, d, m, y] = ddmmyyyy;
-    return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+    return toISODateFromParts(ddmmyyyy[1], ddmmyyyy[2], ddmmyyyy[3]);
+  }
+
+  const ddmmyy = str.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2})$/);
+  if (ddmmyy) {
+    return toISODateFromParts(ddmmyy[1], ddmmyy[2], ddmmyy[3]);
+  }
+
+  const yyyymmdd = str.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/);
+  if (yyyymmdd) {
+    return toISODateFromParts(yyyymmdd[3], yyyymmdd[2], yyyymmdd[1]);
   }
 
   if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
 
   const parsed = new Date(str);
-  if (!Number.isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10);
+  if (!Number.isNaN(parsed.getTime())) {
+    const y = parsed.getFullYear();
+    const m = String(parsed.getMonth() + 1).padStart(2, "0");
+    const d = String(parsed.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  }
 
   return null;
 }
@@ -118,12 +165,14 @@ function getField(row, ...names) {
 }
 
 function entryKey(entry) {
-  return `${entry.date}|${entry.description.toLowerCase()}|${entry.amount}`;
+  return `${entry.date}|${entry.description.toLowerCase()}|${entry.amount}|${entry.type}`;
 }
+
+export { parseExcelDate, parseAmount, entryKey, mapExcelCategory };
 
 /**
  * Parse an Excel/CSV file in the IDL format: Date, Description, Expense, Category.
- * Returns { entries, errors, skipped }.
+ * Returns { rows, errors, duplicateCount }.
  */
 export async function parseExcelFile(
   file,
@@ -134,18 +183,18 @@ export async function parseExcelFile(
   const workbook = XLSX.read(buffer, { type: "array", cellDates: true });
   const sheetName = workbook.SheetNames[0];
   if (!sheetName) {
-    return { entries: [], errors: ["The file has no worksheets."], skipped: 0 };
+    return { rows: [], errors: ["The file has no worksheets."], duplicateCount: 0 };
   }
 
   const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { defval: "" });
   if (rows.length === 0) {
-    return { entries: [], errors: ["The worksheet is empty."], skipped: 0 };
+    return { rows: [], errors: ["The worksheet is empty."], duplicateCount: 0 };
   }
 
   const existingKeys = new Set(existingEntries.map(entryKey));
-  const entries = [];
+  const previewRows = [];
   const errors = [];
-  let skipped = 0;
+  let duplicateCount = 0;
 
   rows.forEach((row, index) => {
     const rowNum = index + 2;
@@ -172,8 +221,7 @@ export async function parseExcelFile(
       return;
     }
 
-    const entry = {
-      id: uid(),
+    const candidate = {
       type: "expense",
       amount,
       description,
@@ -181,15 +229,23 @@ export async function parseExcelFile(
       date,
     };
 
-    const key = entryKey(entry);
-    if (existingKeys.has(key)) {
-      skipped += 1;
-      return;
-    }
+    const key = entryKey(candidate);
+    const isDuplicate = existingKeys.has(key);
 
-    existingKeys.add(key);
-    entries.push(entry);
+    previewRows.push({
+      previewId: uid(),
+      sourceRow: rowNum,
+      included: !isDuplicate,
+      isDuplicate,
+      ...candidate,
+    });
+
+    if (isDuplicate) {
+      duplicateCount += 1;
+    } else {
+      existingKeys.add(key);
+    }
   });
 
-  return { entries, errors, skipped };
+  return { rows: previewRows, errors, duplicateCount };
 }
