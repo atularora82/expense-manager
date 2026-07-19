@@ -11,6 +11,7 @@ export function matchesGlobalSearch(entry, query, catInfoFor) {
   const cat = catInfoFor(entry.type, entry.category);
   const fields = [
     entry.description,
+    entry.label,
     cat?.label,
     entry.category,
     TYPE_LABELS[entry.type] || entry.type,

@@ -71,3 +71,38 @@ export function createImportPreviewState(parseResult, meta = {}) {
     duplicateCount: parseResult.duplicateCount ?? 0,
   };
 }
+
+export function defaultImportLabel(fileName = "") {
+  return String(fileName)
+    .replace(/\.[^.]+$/, "")
+    .replace(/[_-]+/g, " ")
+    .trim();
+}
+
+export function buildImportConfirmationSummary({
+  rows,
+  errors = [],
+  fileName = "",
+  mergedEntries = [],
+  mergedCount = 0,
+}) {
+  const stats = getImportPreviewStats(rows);
+  const totals = { expense: 0, income: 0, investment: 0 };
+  for (const entry of mergedEntries) {
+    totals[entry.type] = (totals[entry.type] || 0) + entry.amount;
+  }
+  const dates = mergedEntries.map((entry) => entry.date).sort();
+
+  return {
+    fileName,
+    mergedCount,
+    attemptedCount: mergedEntries.length,
+    stats,
+    parseErrors: errors.length,
+    totals,
+    dateFrom: dates[0] || null,
+    dateTo: dates[dates.length - 1] || null,
+    importedIds: mergedEntries.map((entry) => entry.id),
+    suggestedLabel: defaultImportLabel(fileName),
+  };
+}

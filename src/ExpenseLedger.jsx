@@ -43,6 +43,8 @@ import {
   buildEntriesFromPreview,
   getRowValidationError,
   mergeImportedEntries,
+  buildImportConfirmationSummary,
+  defaultImportLabel,
 } from "./importPreview.js";
 import { isStorageNotFoundError, parseStoredJson } from "./storageUtils.js";
 
@@ -359,6 +361,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
   const [voiceNote, setVoiceNote] = useState("");
   const [importNote, setImportNote] = useState("");
   const [importPreview, setImportPreview] = useState(null);
+  const [importConfirm, setImportConfirm] = useState(null);
   const [statementImport, setStatementImport] = useState(null);
   const [statementProfiles, setStatementProfiles] = useState({});
   const [profilesLoaded, setProfilesLoaded] = useState(false);
@@ -979,6 +982,17 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                 >
                   {en.description}
                 </div>
+                {en.label && (
+                  <div
+                    style={{
+                      fontSize: 11,
+                      color: "#3C6E91",
+                      marginTop: 3,
+                    }}
+                  >
+                    {en.label}
+                  </div>
+                )}
               </div>
               <div
                 className="cat-stamp"
@@ -1287,40 +1301,73 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
   function confirmImport() {
     if (!importPreview) return;
     const imported = buildEntriesFromPreview(importPreview.rows);
+    const existingKeys = new Set(entries.map(entryKey));
+    const newEntries = imported.filter((entry) => !existingKeys.has(entryKey(entry)));
     let mergedCount = 0;
-    if (imported.length > 0) {
+
+    if (newEntries.length > 0) {
       setEntries((prev) => {
         const merged = mergeImportedEntries(prev, imported);
         mergedCount = merged.length - prev.length;
         return merged;
       });
-      learnCategoryRulesFromEntries(imported);
+      learnCategoryRulesFromEntries(newEntries);
     }
-    const stats = getImportPreviewStats(importPreview.rows);
+
+    if (importPreview.errors.length > 0) {
+      console.warn("Import parse errors:", importPreview.errors);
+    }
+
+    setImportConfirm({
+      ...buildImportConfirmationSummary({
+        rows: importPreview.rows,
+        errors: importPreview.errors,
+        fileName: importPreview.fileName,
+        mergedEntries: newEntries,
+        mergedCount: newEntries.length,
+      }),
+      label: defaultImportLabel(importPreview.fileName),
+    });
+    setImportPreview(null);
+  }
+
+  function finishImportConfirm() {
+    if (!importConfirm) return;
+    const trimmedLabel = String(importConfirm.label || "").trim();
+    if (trimmedLabel && importConfirm.importedIds.length > 0) {
+      const ids = new Set(importConfirm.importedIds);
+      setEntries((prev) =>
+        prev.map((entry) =>
+          ids.has(entry.id) ? { ...entry, label: trimmedLabel } : entry
+        )
+      );
+    }
+
+    const { mergedCount, attemptedCount, stats, parseErrors } = importConfirm;
     const parts = [];
     if (mergedCount > 0) {
       parts.push(`Imported ${mergedCount} new entr${mergedCount === 1 ? "y" : "ies"}`);
-    } else if (imported.length > 0) {
+      if (trimmedLabel) parts.push(`tagged "${trimmedLabel}"`);
+    } else if (attemptedCount > 0) {
       parts.push("No new entries added (all selected rows already exist)");
+    } else {
+      parts.push("Nothing imported");
     }
-    if (stats.included > imported.length) {
+    if (stats.included > attemptedCount) {
       parts.push(
-        `${stats.included - imported.length} selected row${stats.included - imported.length === 1 ? "" : "s"} skipped (invalid fields)`
+        `${stats.included - attemptedCount} selected row${stats.included - attemptedCount === 1 ? "" : "s"} skipped (invalid fields)`
       );
     }
     if (stats.total - stats.included > 0) {
       parts.push(`${stats.total - stats.included} excluded`);
     }
-    if (importPreview.errors.length > 0) {
+    if (parseErrors > 0) {
       parts.push(
-        `${importPreview.errors.length} source row${importPreview.errors.length === 1 ? "" : "s"} could not be parsed`
+        `${parseErrors} source row${parseErrors === 1 ? "" : "s"} could not be parsed`
       );
     }
-    setImportNote(parts.length ? parts.join("; ") + "." : "Nothing imported.");
-    if (importPreview.errors.length > 0) {
-      console.warn("Import parse errors:", importPreview.errors);
-    }
-    setImportPreview(null);
+    setImportNote(parts.join("; ") + ".");
+    setImportConfirm(null);
   }
 
   function buildCurrentBackup() {
@@ -2940,7 +2987,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
         )}
 
         {importPreview && importPreviewStats && (
-          <div className="ledger-modal-backdrop" onClick={() => setImportPreview(null)}>
+          <div className="ledger-modal-backdrop">
             <div
               className="ledger-modal"
               style={{
@@ -3208,6 +3255,151 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                   onClick={() => setImportPreview(null)}
                 >
                   Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {importConfirm && (
+          <div className="ledger-modal-backdrop">
+            <div
+              className="ledger-modal"
+              style={{ maxWidth: 520 }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div
+                style={{
+                  fontFamily: "'Fraunces', serif",
+                  fontSize: 18,
+                  fontWeight: 600,
+                  marginBottom: 8,
+                }}
+              >
+                Import complete
+              </div>
+              <div style={{ fontSize: 13, color: "#74836A", marginBottom: 16 }}>
+                {importConfirm.fileName}
+              </div>
+
+              <div
+                style={{
+                  border: "1px solid #D8CDB4",
+                  borderRadius: 6,
+                  background: "#FFFDF8",
+                  padding: "14px 16px",
+                  marginBottom: 16,
+                  fontSize: 13,
+                  lineHeight: 1.7,
+                }}
+              >
+                {importConfirm.mergedCount > 0 ? (
+                  <div style={{ fontWeight: 600, color: "#2F6B4F", marginBottom: 8 }}>
+                    {importConfirm.mergedCount} new entr
+                    {importConfirm.mergedCount === 1 ? "y" : "ies"} added
+                  </div>
+                ) : (
+                  <div style={{ fontWeight: 600, color: "#8B5E34", marginBottom: 8 }}>
+                    No new entries added
+                  </div>
+                )}
+
+                {importConfirm.dateFrom && importConfirm.dateTo && (
+                  <div>
+                    Date range: {fmtDateFull(importConfirm.dateFrom)}
+                    {importConfirm.dateFrom !== importConfirm.dateTo &&
+                      ` – ${fmtDateFull(importConfirm.dateTo)}`}
+                  </div>
+                )}
+
+                {importConfirm.totals.expense > 0 && (
+                  <div>Expenses: {fmtMoney(importConfirm.totals.expense)}</div>
+                )}
+                {importConfirm.totals.income > 0 && (
+                  <div>Income: {fmtMoney(importConfirm.totals.income)}</div>
+                )}
+                {importConfirm.totals.investment > 0 && (
+                  <div>Investments: {fmtMoney(importConfirm.totals.investment)}</div>
+                )}
+
+                {importConfirm.stats.total - importConfirm.stats.included > 0 && (
+                  <div style={{ color: "#74836A" }}>
+                    {importConfirm.stats.total - importConfirm.stats.included} row
+                    {importConfirm.stats.total - importConfirm.stats.included === 1
+                      ? ""
+                      : "s"}{" "}
+                    excluded
+                  </div>
+                )}
+                {importConfirm.attemptedCount > importConfirm.mergedCount && (
+                  <div style={{ color: "#74836A" }}>
+                    {importConfirm.attemptedCount - importConfirm.mergedCount} duplicate
+                    {importConfirm.attemptedCount - importConfirm.mergedCount === 1
+                      ? ""
+                      : "s"}{" "}
+                    skipped
+                  </div>
+                )}
+                {importConfirm.stats.included > importConfirm.attemptedCount && (
+                  <div style={{ color: "#A93B3B" }}>
+                    {importConfirm.stats.included - importConfirm.attemptedCount} selected row
+                    {importConfirm.stats.included - importConfirm.attemptedCount === 1
+                      ? ""
+                      : "s"}{" "}
+                    skipped (invalid fields)
+                  </div>
+                )}
+                {importConfirm.parseErrors > 0 && (
+                  <div style={{ color: "#A93B3B" }}>
+                    {importConfirm.parseErrors} source row
+                    {importConfirm.parseErrors === 1 ? "" : "s"} could not be parsed
+                  </div>
+                )}
+              </div>
+
+              {importConfirm.mergedCount > 0 && (
+                <div style={{ marginBottom: 18 }}>
+                  <label
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 600,
+                      color: "#74836A",
+                      textTransform: "uppercase",
+                      letterSpacing: "0.06em",
+                      display: "block",
+                      marginBottom: 6,
+                    }}
+                  >
+                    Tag imported entries
+                  </label>
+                  <input
+                    className="ledger-input"
+                    type="text"
+                    placeholder={
+                      importConfirm.suggestedLabel || "e.g. HDFC Jan 2026"
+                    }
+                    value={importConfirm.label}
+                    onChange={(e) =>
+                      setImportConfirm((prev) =>
+                        prev ? { ...prev, label: e.target.value } : prev
+                      )
+                    }
+                  />
+                  <div style={{ fontSize: 12, color: "#74836A", marginTop: 6 }}>
+                    Optional label applied to all {importConfirm.mergedCount} imported
+                    entr{importConfirm.mergedCount === 1 ? "y" : "ies"}. Searchable in the
+                    ledger.
+                  </div>
+                </div>
+              )}
+
+              <div style={{ display: "flex", gap: 10 }}>
+                <button
+                  type="button"
+                  className="ledger-btn"
+                  onClick={finishImportConfirm}
+                >
+                  Done
                 </button>
               </div>
             </div>
