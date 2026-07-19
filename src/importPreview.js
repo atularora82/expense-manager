@@ -1,3 +1,5 @@
+import { entryKey } from "./excelImport.js";
+
 function uid() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 }
@@ -45,6 +47,20 @@ export function buildEntriesFromPreview(rows) {
       category: r.category,
       recordedAt,
     }));
+}
+
+export function mergeImportedEntries(existingEntries, importedEntries) {
+  const existingKeys = new Set(existingEntries.map(entryKey));
+  const uniqueImported = [];
+
+  for (const entry of importedEntries) {
+    const key = entryKey(entry);
+    if (existingKeys.has(key)) continue;
+    existingKeys.add(key);
+    uniqueImported.push(entry);
+  }
+
+  return [...uniqueImported, ...existingEntries];
 }
 
 export function createImportPreviewState(parseResult, meta = {}) {

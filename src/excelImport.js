@@ -165,7 +165,11 @@ function getField(row, ...names) {
 }
 
 function entryKey(entry) {
-  return `${entry.date}|${entry.description.toLowerCase()}|${entry.amount}|${entry.type}`;
+  const amount = Number(entry.amount);
+  const normalizedAmount = Number.isFinite(amount)
+    ? amount.toFixed(2)
+    : String(entry.amount ?? "");
+  return `${entry.date}|${String(entry.description).toLowerCase().trim()}|${normalizedAmount}|${entry.type || "expense"}`;
 }
 
 export { parseExcelDate, parseAmount, entryKey, mapExcelCategory };

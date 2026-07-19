@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
-import { parseExcelFile } from "./excelImport.js";
+import { parseExcelFile, entryKey } from "./excelImport.js";
 import {
   readStatementFile,
   resolveColumnMapping,
@@ -42,6 +42,7 @@ import {
   getImportPreviewStats,
   buildEntriesFromPreview,
   getRowValidationError,
+  mergeImportedEntries,
 } from "./importPreview.js";
 import { isStorageNotFoundError, parseStoredJson } from "./storageUtils.js";
 
@@ -381,6 +382,9 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
   categoryRef.current = category;
   const categoryRulesRef = useRef(categoryRules);
   categoryRulesRef.current = categoryRules;
+  const entriesRef = useRef(entries);
+  entriesRef.current = entries;
+  const saveEntriesTimerRef = useRef(null);
   const recognitionRef = React.useRef(null);
   const voiceSupported =
     typeof window !== "undefined" &&
@@ -476,14 +480,26 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
 
   useEffect(() => {
     if (!storageHydrated) return;
-    (async () => {
+
+    if (saveEntriesTimerRef.current) {
+      clearTimeout(saveEntriesTimerRef.current);
+    }
+
+    saveEntriesTimerRef.current = setTimeout(async () => {
+      const payload = JSON.stringify(entriesRef.current);
       try {
-        await window.storage.set("ledger-entries", JSON.stringify(entries));
+        await window.storage.set("ledger-entries", payload);
         setSaveError(false);
       } catch (e) {
         setSaveError(true);
       }
-    })();
+    }, 400);
+
+    return () => {
+      if (saveEntriesTimerRef.current) {
+        clearTimeout(saveEntriesTimerRef.current);
+      }
+    };
   }, [entries, storageHydrated]);
 
   useEffect(() => {
@@ -1206,7 +1222,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
     const result = parseStatementWithMapping(
       statementImport.rows,
       statementImport.mapping,
-      entries,
+      entriesRef.current,
       categoryRulesRef.current
     );
     if (result.rows.length === 0 && result.errors.length === 0) {
@@ -1230,7 +1246,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
 
     setImportNote("");
     try {
-      const result = await parseExcelFile(file, entries, categoryRules);
+      const result = await parseExcelFile(file, entriesRef.current, categoryRules);
       if (result.rows.length === 0 && result.errors.length === 0) {
         setImportNote("No rows found to import.");
         return;
@@ -1271,14 +1287,21 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
   function confirmImport() {
     if (!importPreview) return;
     const imported = buildEntriesFromPreview(importPreview.rows);
+    let mergedCount = 0;
     if (imported.length > 0) {
-      setEntries((prev) => [...imported, ...prev]);
+      setEntries((prev) => {
+        const merged = mergeImportedEntries(prev, imported);
+        mergedCount = merged.length - prev.length;
+        return merged;
+      });
       learnCategoryRulesFromEntries(imported);
     }
     const stats = getImportPreviewStats(importPreview.rows);
     const parts = [];
-    if (imported.length > 0) {
-      parts.push(`Imported ${imported.length} entr${imported.length === 1 ? "y" : "ies"}`);
+    if (mergedCount > 0) {
+      parts.push(`Imported ${mergedCount} new entr${mergedCount === 1 ? "y" : "ies"}`);
+    } else if (imported.length > 0) {
+      parts.push("No new entries added (all selected rows already exist)");
     }
     if (stats.included > imported.length) {
       parts.push(
