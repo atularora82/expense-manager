@@ -1,4 +1,5 @@
 import { entryKey } from "./excelImport.js";
+import { findDateAmountDuplicates } from "./duplicates.js";
 
 function uid() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -14,6 +15,29 @@ export function getRowValidationError(row) {
   return null;
 }
 
+export function attachDateAmountWarnings(rows, existingEntries = []) {
+  return rows.map((row) => {
+    if (getRowValidationError(row) || row.isDuplicate) {
+      return { ...row, dateAmountMatches: [], hasDateAmountWarning: false };
+    }
+
+    const matches = findDateAmountDuplicates(existingEntries, {
+      date: row.date,
+      amount: row.amount,
+    });
+
+    return {
+      ...row,
+      dateAmountMatches: matches,
+      hasDateAmountWarning: matches.length > 0,
+    };
+  });
+}
+
+export function refreshImportPreviewWarnings(rows, existingEntries = []) {
+  return attachDateAmountWarnings(rows, existingEntries);
+}
+
 export function getImportPreviewStats(rows) {
   const included = rows.filter((r) => r.included);
   const importable = included.filter((r) => !getRowValidationError(r));
@@ -22,6 +46,8 @@ export function getImportPreviewStats(rows) {
     included: included.length,
     importable: importable.length,
     duplicates: rows.filter((r) => r.isDuplicate).length,
+    dateAmountWarnings: rows.filter((r) => r.hasDateAmountWarning).length,
+    dateAmountWarningsIncluded: included.filter((r) => r.hasDateAmountWarning).length,
     invalidIncluded: included.filter((r) => getRowValidationError(r)).length,
   };
 }
@@ -63,10 +89,14 @@ export function mergeImportedEntries(existingEntries, importedEntries) {
   return [...uniqueImported, ...existingEntries];
 }
 
-export function createImportPreviewState(parseResult, meta = {}) {
+export function createImportPreviewState(
+  parseResult,
+  meta = {},
+  existingEntries = []
+) {
   return {
     ...meta,
-    rows: parseResult.rows || [],
+    rows: attachDateAmountWarnings(parseResult.rows || [], existingEntries),
     errors: parseResult.errors || [],
     duplicateCount: parseResult.duplicateCount ?? 0,
   };

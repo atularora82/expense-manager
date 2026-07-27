@@ -45,6 +45,7 @@ import {
   mergeImportedEntries,
   buildImportConfirmationSummary,
   defaultImportLabel,
+  refreshImportPreviewWarnings,
 } from "./importPreview.js";
 import { isStorageNotFoundError, parseStoredJson } from "./storageUtils.js";
 
@@ -1364,10 +1365,14 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
     }
     persistStatementProfile(statementImport.columns, statementImport.mapping);
     setImportPreview(
-      createImportPreviewState(result, {
-        fileName: statementImport.fileName,
-        source: "statement",
-      })
+      createImportPreviewState(
+        result,
+        {
+          fileName: statementImport.fileName,
+          source: "statement",
+        },
+        entriesRef.current
+      )
     );
     setStatementImport(null);
   }
@@ -1384,7 +1389,9 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
         setImportNote("No rows found to import.");
         return;
       }
-      setImportPreview(createImportPreviewState(result, { fileName: file.name }));
+      setImportPreview(
+        createImportPreviewState(result, { fileName: file.name }, entriesRef.current)
+      );
     } catch (err) {
       setImportNote("Import failed. Check that the file matches the IDL format.");
       console.error(err);
@@ -1405,6 +1412,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
           return row;
         });
       }
+      rows = refreshImportPreviewWarnings(rows, entriesRef.current);
       return { ...prev, rows };
     });
   }
@@ -1437,6 +1445,11 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
       console.warn("Import parse errors:", importPreview.errors);
     }
 
+    const dateAmountWarningCount = importPreview.rows.filter(
+      (row) =>
+        row.included && row.hasDateAmountWarning && !getRowValidationError(row)
+    ).length;
+
     setImportConfirm({
       ...buildImportConfirmationSummary({
         rows: importPreview.rows,
@@ -1446,6 +1459,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
         mergedCount: newEntries.length,
       }),
       label: defaultImportLabel(importPreview.fileName),
+      dateAmountWarningCount,
     });
     setImportPreview(null);
   }
@@ -1483,6 +1497,11 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
     if (parseErrors > 0) {
       parts.push(
         `${parseErrors} source row${parseErrors === 1 ? "" : "s"} could not be parsed`
+      );
+    }
+    if (importConfirm.dateAmountWarningCount > 0) {
+      parts.push(
+        `${importConfirm.dateAmountWarningCount} imported with date+amount warnings`
       );
     }
     setImportNote(parts.join("; ") + ".");
@@ -1754,6 +1773,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
         }
         .import-preview-table tr.row-excluded td { opacity: 0.45; }
         .import-preview-table tr.row-duplicate td { background: #FBF6EA; }
+        .import-preview-table tr.row-date-amount-warn td { background: #FFF8EE; }
         .import-preview-table tr.row-invalid td { background: #FDF0F0; }
         .import-preview-input {
           font-family: 'Inter', sans-serif;
@@ -3354,6 +3374,15 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                 {importPreviewStats.included} selected, {importPreviewStats.importable} ready
                 {importPreviewStats.duplicates > 0 &&
                   ` (${importPreviewStats.duplicates} duplicate${importPreviewStats.duplicates === 1 ? "" : "s"} unchecked by default)`}
+                {importPreviewStats.dateAmountWarnings > 0 && (
+                  <span style={{ color: "#C08A28" }}>
+                    {" "}
+                    &middot; {importPreviewStats.dateAmountWarnings} date+amount warning
+                    {importPreviewStats.dateAmountWarnings === 1 ? "" : "s"}
+                    {importPreviewStats.dateAmountWarningsIncluded > 0 &&
+                      ` (${importPreviewStats.dateAmountWarningsIncluded} selected)`}
+                  </span>
+                )}
                 {importPreviewStats.invalidIncluded > 0 && (
                   <span style={{ color: "#A93B3B" }}>
                     {" "}
@@ -3362,6 +3391,30 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                   </span>
                 )}
               </div>
+
+              {importPreviewStats.dateAmountWarningsIncluded > 0 && (
+                <div
+                  style={{
+                    fontSize: 12.5,
+                    color: "#8B5E34",
+                    marginBottom: 12,
+                    border: "1px solid #E4C88A",
+                    background: "#FBF3E6",
+                    borderRadius: 6,
+                    padding: "10px 12px",
+                  }}
+                >
+                  <div style={{ fontWeight: 600, marginBottom: 4 }}>
+                    Date &amp; amount checkpoint
+                  </div>
+                  {importPreviewStats.dateAmountWarningsIncluded} selected row
+                  {importPreviewStats.dateAmountWarningsIncluded === 1
+                    ? " matches"
+                    : "s match"}{" "}
+                  an existing ledger entry on the same date with the same amount. Review
+                  these before importing.
+                </div>
+              )}
 
               {importPreview.rows.length > 0 && (
                 <>
@@ -3430,6 +3483,9 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                           const rowClass = [
                             !row.included ? "row-excluded" : "",
                             row.isDuplicate && row.included ? "row-duplicate" : "",
+                            row.hasDateAmountWarning && row.included && !row.isDuplicate
+                              ? "row-date-amount-warn"
+                              : "",
                             rowError ? "row-invalid" : "",
                           ]
                             .filter(Boolean)
@@ -3496,6 +3552,23 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                                     }}
                                   >
                                     Matches existing ledger entry
+                                  </div>
+                                )}
+                                {row.hasDateAmountWarning && row.included && (
+                                  <div
+                                    style={{
+                                      fontSize: 10.5,
+                                      color: "#C08A28",
+                                      marginTop: 3,
+                                    }}
+                                  >
+                                    Same date &amp; amount as:{" "}
+                                    {row.dateAmountMatches
+                                      .slice(0, 2)
+                                      .map((match) => match.description)
+                                      .join(", ")}
+                                    {row.dateAmountMatches.length > 2 &&
+                                      ` +${row.dateAmountMatches.length - 2} more`}
                                   </div>
                                 )}
                                 {rowError && (
@@ -3690,6 +3763,13 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                   <div style={{ color: "#A93B3B" }}>
                     {importConfirm.parseErrors} source row
                     {importConfirm.parseErrors === 1 ? "" : "s"} could not be parsed
+                  </div>
+                )}
+                {importConfirm.dateAmountWarningCount > 0 && (
+                  <div style={{ color: "#C08A28" }}>
+                    {importConfirm.dateAmountWarningCount} entr
+                    {importConfirm.dateAmountWarningCount === 1 ? "y" : "ies"} imported
+                    despite matching an existing date &amp; amount
                   </div>
                 )}
               </div>
