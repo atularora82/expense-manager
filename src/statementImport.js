@@ -1,11 +1,7 @@
 import * as XLSX from "xlsx";
 import { lookupCategoryRule } from "./categoryRules.js";
-import {
-  parseExcelDate,
-  parseAmount,
-  entryKey,
-  mapExcelCategory,
-} from "./excelImport.js";
+import { parseAmount, mapExcelCategory } from "./excelImport.js";
+import { parseDateWithFormat } from "./dateParse.js";
 
 const COLUMN_GUESSES = {
   date: [
@@ -94,7 +90,7 @@ export const STATEMENT_MAP_FIELDS = [
 
 export async function readStatementFile(file) {
   const buffer = await file.arrayBuffer();
-  const workbook = XLSX.read(buffer, { type: "array", cellDates: true });
+  const workbook = XLSX.read(buffer, { type: "array", cellDates: false });
   const sheetName = workbook.SheetNames[0];
   if (!sheetName) {
     throw new Error("The file has no worksheets.");
@@ -102,10 +98,29 @@ export async function readStatementFile(file) {
 
   const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], {
     defval: "",
+    raw: false,
   });
   const columns = rows.length > 0 ? Object.keys(rows[0]) : [];
 
   return { columns, rows, fileName: file.name };
+}
+
+export function resolveStatementProfile(savedProfiles, columns) {
+  const signature = columnSignature(columns);
+  const saved = savedProfiles[signature];
+  if (!saved) {
+    return { mapping: guessColumnMapping(columns), dateFormat: "DMY" };
+  }
+  if (saved.mapping) {
+    return {
+      mapping: sanitizeMappingForColumns(saved.mapping, columns),
+      dateFormat: saved.dateFormat || "DMY",
+    };
+  }
+  return {
+    mapping: sanitizeMappingForColumns(saved, columns),
+    dateFormat: "DMY",
+  };
 }
 
 export function columnSignature(columns) {
@@ -147,22 +162,7 @@ export function guessColumnMapping(columns) {
 }
 
 export function resolveColumnMapping(columns, savedProfiles = {}) {
-  const signature = columnSignature(columns);
-  if (savedProfiles[signature]) {
-    const saved = sanitizeMappingForColumns(savedProfiles[signature], columns);
-    if (mappingIsValid(saved)) {
-      return saved;
-    }
-    const guessed = guessColumnMapping(columns);
-    return {
-      date: saved.date || guessed.date,
-      description: saved.description || guessed.description,
-      debit: saved.debit || guessed.debit,
-      credit: saved.credit || guessed.credit,
-      amount: saved.amount || guessed.amount,
-    };
-  }
-  return guessColumnMapping(columns);
+  return resolveStatementProfile(savedProfiles, columns).mapping;
 }
 
 export function mappingIsValid(mapping) {
@@ -174,12 +174,11 @@ export function parseStatementWithMapping(
   rows,
   mapping,
   existingEntries = [],
-  categoryRules = {}
+  categoryRules = {},
+  dateFormat = "DMY"
 ) {
   const previewRows = [];
   const errors = [];
-  let duplicateCount = 0;
-  const existingKeys = new Set(existingEntries.map(entryKey));
 
   if (!mappingIsValid(mapping)) {
     return {
@@ -198,10 +197,12 @@ export function parseStatementWithMapping(
 
     if (!dateRaw && !description) return;
 
-    const date = parseExcelDate(dateRaw);
+    const date = parseDateWithFormat(dateRaw, dateFormat);
     if (!date) {
       if (dateRaw || description) {
-        errors.push(`Row ${rowNum}: invalid date "${dateRaw}"`);
+        errors.push(
+          `Row ${rowNum}: invalid date "${dateRaw}" (check date format setting)`
+        );
       }
       return;
     }
@@ -261,24 +262,15 @@ export function parseStatementWithMapping(
         date,
       };
 
-      const key = entryKey(candidate);
-      const isDuplicate = existingKeys.has(key);
-
       previewRows.push({
         previewId: uid(),
         sourceRow: rowNum,
-        included: !isDuplicate,
-        isDuplicate,
+        included: true,
+        dateRaw: dateRaw != null ? String(dateRaw).trim() : "",
         ...candidate,
       });
-
-      if (isDuplicate) {
-        duplicateCount += 1;
-      } else {
-        existingKeys.add(key);
-      }
     }
   });
 
-  return { rows: previewRows, errors, duplicateCount };
+  return { rows: previewRows, errors, duplicateCount: 0 };
 }

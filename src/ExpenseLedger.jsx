@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
-import { parseExcelFile, entryKey } from "./excelImport.js";
+import { parseExcelFile } from "./excelImport.js";
 import {
   readStatementFile,
   resolveColumnMapping,
@@ -7,7 +7,13 @@ import {
   parseStatementWithMapping,
   mappingIsValid,
   STATEMENT_MAP_FIELDS,
+  resolveStatementProfile,
 } from "./statementImport.js";
+import {
+  DATE_FORMAT_OPTIONS,
+  formatISODateLabel,
+  previewStatementDates,
+} from "./dateParse.js";
 import {
   lookupCategoryRule,
   saveCategoryRule,
@@ -45,7 +51,9 @@ import {
   mergeImportedEntries,
   buildImportConfirmationSummary,
   defaultImportLabel,
-  refreshImportPreviewWarnings,
+  refreshImportPreviewDuplicates,
+  isNewImportEntry,
+  reparseImportPreviewDates,
 } from "./importPreview.js";
 import { isStorageNotFoundError, parseStoredJson } from "./storageUtils.js";
 
@@ -1289,11 +1297,14 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
     return budgets[id] ? String(budgets[id]) : "";
   }
 
-  async function persistStatementProfile(columns, mapping) {
+  async function persistStatementProfile(columns, mapping, dateFormat = "DMY") {
     if (!mappingIsValid(mapping) || !storageHydrated) return;
     const signature = columnSignature(columns);
     setStatementProfiles((prev) => {
-      const next = { ...prev, [signature]: mapping };
+      const next = {
+        ...prev,
+        [signature]: { mapping, dateFormat },
+      };
       window.storage
         .set("ledger-statement-profiles", JSON.stringify(next))
         .catch(() => {});
@@ -1311,12 +1322,13 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
         setImportNote("Statement file is empty.");
         return;
       }
-      const mapping = resolveColumnMapping(columns, statementProfiles);
+      const profile = resolveStatementProfile(statementProfiles, columns);
       setStatementImport({
         fileName,
         columns,
         rows,
-        mapping,
+        mapping: profile.mapping,
+        dateFormat: profile.dateFormat,
         mappingRemembered:
           profilesLoaded &&
           Boolean(statementProfiles[columnSignature(columns)]),
@@ -1357,19 +1369,25 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
       statementImport.rows,
       statementImport.mapping,
       entriesRef.current,
-      categoryRulesRef.current
+      categoryRulesRef.current,
+      statementImport.dateFormat || "DMY"
     );
     if (result.rows.length === 0 && result.errors.length === 0) {
       setImportNote("No transactions found with the current column mapping.");
       return;
     }
-    persistStatementProfile(statementImport.columns, statementImport.mapping);
+    persistStatementProfile(
+      statementImport.columns,
+      statementImport.mapping,
+      statementImport.dateFormat || "DMY"
+    );
     setImportPreview(
       createImportPreviewState(
         result,
         {
           fileName: statementImport.fileName,
           source: "statement",
+          dateFormat: statementImport.dateFormat || "DMY",
         },
         entriesRef.current
       )
@@ -1412,7 +1430,13 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
           return row;
         });
       }
-      rows = refreshImportPreviewWarnings(rows, entriesRef.current);
+      const affectsDuplicate =
+        patch.date !== undefined ||
+        patch.amount !== undefined ||
+        patch.type !== undefined;
+      if (affectsDuplicate) {
+        rows = refreshImportPreviewDuplicates(rows, entriesRef.current);
+      }
       return { ...prev, rows };
     });
   }
@@ -1428,8 +1452,9 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
   function confirmImport() {
     if (!importPreview) return;
     const imported = buildEntriesFromPreview(importPreview.rows);
-    const existingKeys = new Set(entries.map(entryKey));
-    const newEntries = imported.filter((entry) => !existingKeys.has(entryKey(entry)));
+    const newEntries = imported.filter((entry) =>
+      isNewImportEntry(entry, entries)
+    );
     let mergedCount = 0;
 
     if (newEntries.length > 0) {
@@ -1447,7 +1472,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
 
     const dateAmountWarningCount = importPreview.rows.filter(
       (row) =>
-        row.included && row.hasDateAmountWarning && !getRowValidationError(row)
+        row.included && row.isDuplicate && !getRowValidationError(row)
     ).length;
 
     setImportConfirm({
@@ -1501,7 +1526,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
     }
     if (importConfirm.dateAmountWarningCount > 0) {
       parts.push(
-        `${importConfirm.dateAmountWarningCount} imported with date+amount warnings`
+        `${importConfirm.dateAmountWarningCount} duplicate entr${importConfirm.dateAmountWarningCount === 1 ? "y" : "ies"} imported anyway`
       );
     }
     setImportNote(parts.join("; ") + ".");
@@ -1653,6 +1678,24 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
     return null;
   }, [filterType]);
 
+  function updateImportPreviewDateFormat(dateFormat) {
+    setImportPreview((prev) => {
+      if (!prev || prev.source !== "statement") return prev;
+      let rows = reparseImportPreviewDates(prev.rows, dateFormat);
+      rows = refreshImportPreviewDuplicates(rows, entriesRef.current);
+      return { ...prev, dateFormat, rows };
+    });
+  }
+
+  const statementDateSamples = useMemo(() => {
+    if (!statementImport?.mapping?.date) return [];
+    return previewStatementDates(
+      statementImport.rows,
+      statementImport.mapping,
+      statementImport.dateFormat || "DMY"
+    );
+  }, [statementImport]);
+
   const importPreviewStats = useMemo(
     () => (importPreview ? getImportPreviewStats(importPreview.rows) : null),
     [importPreview]
@@ -1773,7 +1816,6 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
         }
         .import-preview-table tr.row-excluded td { opacity: 0.45; }
         .import-preview-table tr.row-duplicate td { background: #FBF6EA; }
-        .import-preview-table tr.row-date-amount-warn td { background: #FFF8EE; }
         .import-preview-table tr.row-invalid td { background: #FDF0F0; }
         .import-preview-input {
           font-family: 'Inter', sans-serif;
@@ -3313,6 +3355,56 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                   </div>
                 ))}
               </div>
+
+              <div style={{ marginTop: 14 }}>
+                <label
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 600,
+                    color: "#74836A",
+                    textTransform: "uppercase",
+                    letterSpacing: "0.06em",
+                    display: "block",
+                    marginBottom: 5,
+                  }}
+                >
+                  Date format in file
+                </label>
+                <select
+                  className="ledger-select"
+                  value={statementImport.dateFormat || "DMY"}
+                  onChange={(e) =>
+                    setStatementImport((prev) =>
+                      prev ? { ...prev, dateFormat: e.target.value } : prev
+                    )
+                  }
+                >
+                  {DATE_FORMAT_OPTIONS.map((format) => (
+                    <option key={format.id} value={format.id}>
+                      {format.label}
+                    </option>
+                  ))}
+                </select>
+                {statementDateSamples.length > 0 && (
+                  <div
+                    style={{
+                      fontSize: 12,
+                      color: "#74836A",
+                      marginTop: 8,
+                      lineHeight: 1.6,
+                    }}
+                  >
+                    Sample:{" "}
+                    {statementDateSamples
+                      .map(
+                        (sample) =>
+                          `"${sample.raw}" → ${sample.label} (${sample.parsed})`
+                      )
+                      .join(" · ")}
+                  </div>
+                )}
+              </div>
+
               <div style={{ fontSize: 12, color: "#74836A", marginTop: 14 }}>
                 Debits become expenses; credits become income. Category rules apply
                 automatically.
@@ -3373,16 +3465,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                 {importPreviewStats.total === 1 ? "" : "s"} found,{" "}
                 {importPreviewStats.included} selected, {importPreviewStats.importable} ready
                 {importPreviewStats.duplicates > 0 &&
-                  ` (${importPreviewStats.duplicates} duplicate${importPreviewStats.duplicates === 1 ? "" : "s"} unchecked by default)`}
-                {importPreviewStats.dateAmountWarnings > 0 && (
-                  <span style={{ color: "#C08A28" }}>
-                    {" "}
-                    &middot; {importPreviewStats.dateAmountWarnings} date+amount warning
-                    {importPreviewStats.dateAmountWarnings === 1 ? "" : "s"}
-                    {importPreviewStats.dateAmountWarningsIncluded > 0 &&
-                      ` (${importPreviewStats.dateAmountWarningsIncluded} selected)`}
-                  </span>
-                )}
+                  ` (${importPreviewStats.duplicates} duplicate${importPreviewStats.duplicates === 1 ? "" : "s"} unchecked — same date & amount)`}
                 {importPreviewStats.invalidIncluded > 0 && (
                   <span style={{ color: "#A93B3B" }}>
                     {" "}
@@ -3392,27 +3475,40 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                 )}
               </div>
 
-              {importPreviewStats.dateAmountWarningsIncluded > 0 && (
+              {importPreview.source === "statement" && (
                 <div
                   style={{
-                    fontSize: 12.5,
-                    color: "#8B5E34",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 12,
+                    flexWrap: "wrap",
                     marginBottom: 12,
-                    border: "1px solid #E4C88A",
-                    background: "#FBF3E6",
-                    borderRadius: 6,
-                    padding: "10px 12px",
                   }}
                 >
-                  <div style={{ fontWeight: 600, marginBottom: 4 }}>
-                    Date &amp; amount checkpoint
-                  </div>
-                  {importPreviewStats.dateAmountWarningsIncluded} selected row
-                  {importPreviewStats.dateAmountWarningsIncluded === 1
-                    ? " matches"
-                    : "s match"}{" "}
-                  an existing ledger entry on the same date with the same amount. Review
-                  these before importing.
+                  <label
+                    style={{
+                      fontSize: 12,
+                      color: "#74836A",
+                      fontWeight: 600,
+                    }}
+                  >
+                    Date format:
+                  </label>
+                  <select
+                    className="ledger-select"
+                    style={{ width: "auto", minWidth: 280 }}
+                    value={importPreview.dateFormat || "DMY"}
+                    onChange={(e) => updateImportPreviewDateFormat(e.target.value)}
+                  >
+                    {DATE_FORMAT_OPTIONS.map((format) => (
+                      <option key={format.id} value={format.id}>
+                        {format.label}
+                      </option>
+                    ))}
+                  </select>
+                  <span style={{ fontSize: 12, color: "#74836A" }}>
+                    Change if dates or duplicate checks look wrong
+                  </span>
                 </div>
               )}
 
@@ -3483,9 +3579,6 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                           const rowClass = [
                             !row.included ? "row-excluded" : "",
                             row.isDuplicate && row.included ? "row-duplicate" : "",
-                            row.hasDateAmountWarning && row.included && !row.isDuplicate
-                              ? "row-date-amount-warn"
-                              : "",
                             rowError ? "row-invalid" : "",
                           ]
                             .filter(Boolean)
@@ -3516,6 +3609,20 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                                     })
                                   }
                                 />
+                                {row.dateRaw && (
+                                  <div
+                                    style={{
+                                      fontSize: 10,
+                                      color: "#74836A",
+                                      marginTop: 3,
+                                    }}
+                                  >
+                                    File: {row.dateRaw}
+                                    {row.date
+                                      ? ` → ${formatISODateLabel(row.date)}`
+                                      : ""}
+                                  </div>
+                                )}
                               </td>
                               <td>
                                 <select
@@ -3551,24 +3658,27 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                                       marginTop: 3,
                                     }}
                                   >
-                                    Matches existing ledger entry
-                                  </div>
-                                )}
-                                {row.hasDateAmountWarning && row.included && (
-                                  <div
-                                    style={{
-                                      fontSize: 10.5,
-                                      color: "#C08A28",
-                                      marginTop: 3,
-                                    }}
-                                  >
-                                    Same date &amp; amount as:{" "}
-                                    {row.dateAmountMatches
-                                      .slice(0, 2)
-                                      .map((match) => match.description)
-                                      .join(", ")}
-                                    {row.dateAmountMatches.length > 2 &&
-                                      ` +${row.dateAmountMatches.length - 2} more`}
+                                    {row.dateAmountMatches?.length > 0 ? (
+                                      <>
+                                        Same date &amp; amount as existing:{" "}
+                                        {row.dateAmountMatches
+                                          .slice(0, 2)
+                                          .map((match) => {
+                                            const cat = catInfoFor(
+                                              match.type,
+                                              match.category
+                                            );
+                                            return `${match.description}${
+                                              cat?.label ? ` (${cat.label})` : ""
+                                            }`;
+                                          })
+                                          .join(", ")}
+                                        {row.dateAmountMatches.length > 2 &&
+                                          ` +${row.dateAmountMatches.length - 2} more`}
+                                      </>
+                                    ) : (
+                                      "Duplicate date & amount in this import"
+                                    )}
                                   </div>
                                 )}
                                 {rowError && (
@@ -3767,9 +3877,9 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                 )}
                 {importConfirm.dateAmountWarningCount > 0 && (
                   <div style={{ color: "#C08A28" }}>
-                    {importConfirm.dateAmountWarningCount} entr
+                    {importConfirm.dateAmountWarningCount} duplicate entr
                     {importConfirm.dateAmountWarningCount === 1 ? "y" : "ies"} imported
-                    despite matching an existing date &amp; amount
+                    anyway (same date &amp; amount as existing)
                   </div>
                 )}
               </div>

@@ -195,10 +195,8 @@ export async function parseExcelFile(
     return { rows: [], errors: ["The worksheet is empty."], duplicateCount: 0 };
   }
 
-  const existingKeys = new Set(existingEntries.map(entryKey));
   const previewRows = [];
   const errors = [];
-  let duplicateCount = 0;
 
   rows.forEach((row, index) => {
     const rowNum = index + 2;
@@ -233,23 +231,13 @@ export async function parseExcelFile(
       date,
     };
 
-    const key = entryKey(candidate);
-    const isDuplicate = existingKeys.has(key);
-
     previewRows.push({
       previewId: uid(),
       sourceRow: rowNum,
-      included: !isDuplicate,
-      isDuplicate,
+      included: true,
       ...candidate,
     });
-
-    if (isDuplicate) {
-      duplicateCount += 1;
-    } else {
-      existingKeys.add(key);
-    }
   });
 
-  return { rows: previewRows, errors, duplicateCount };
+  return { rows: previewRows, errors, duplicateCount: 0 };
 }

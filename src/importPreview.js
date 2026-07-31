@@ -1,5 +1,6 @@
 import { entryKey } from "./excelImport.js";
-import { findDateAmountDuplicates } from "./duplicates.js";
+import { dateAmountKey, findDateAmountDuplicates } from "./duplicates.js";
+import { parseDateWithFormat, normalizeLedgerDate } from "./dateParse.js";
 
 function uid() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -15,27 +16,55 @@ export function getRowValidationError(row) {
   return null;
 }
 
-export function attachDateAmountWarnings(rows, existingEntries = []) {
+export function reparseImportPreviewDates(rows, dateFormat = "DMY") {
   return rows.map((row) => {
-    if (getRowValidationError(row) || row.isDuplicate) {
-      return { ...row, dateAmountMatches: [], hasDateAmountWarning: false };
+    if (!row.dateRaw) return row;
+    const date = parseDateWithFormat(row.dateRaw, dateFormat);
+    return date ? { ...row, date } : { ...row, date: "" };
+  });
+}
+
+export function markImportPreviewDuplicates(rows, existingEntries = []) {
+  const seenKeys = new Set(
+    existingEntries.map((entry) =>
+      dateAmountKey(normalizeLedgerDate(entry.date), entry.amount)
+    )
+  );
+
+  return rows.map((row) => {
+    if (getRowValidationError(row)) {
+      return { ...row, dateAmountMatches: [], isDuplicate: false };
     }
 
-    const matches = findDateAmountDuplicates(existingEntries, {
-      date: row.date,
+    const normalizedDate = normalizeLedgerDate(row.date);
+    const key = dateAmountKey(normalizedDate, row.amount);
+    const ledgerMatches = findDateAmountDuplicates(existingEntries, {
+      date: normalizedDate,
       amount: row.amount,
     });
+    const isDuplicate = seenKeys.has(key);
+
+    if (!isDuplicate) {
+      seenKeys.add(key);
+    }
+
+    const included = isDuplicate
+      ? row.included === true && row.isDuplicate
+        ? true
+        : false
+      : row.included !== false;
 
     return {
       ...row,
-      dateAmountMatches: matches,
-      hasDateAmountWarning: matches.length > 0,
+      isDuplicate,
+      dateAmountMatches: ledgerMatches,
+      included,
     };
   });
 }
 
-export function refreshImportPreviewWarnings(rows, existingEntries = []) {
-  return attachDateAmountWarnings(rows, existingEntries);
+export function refreshImportPreviewDuplicates(rows, existingEntries = []) {
+  return markImportPreviewDuplicates(rows, existingEntries);
 }
 
 export function getImportPreviewStats(rows) {
@@ -46,8 +75,6 @@ export function getImportPreviewStats(rows) {
     included: included.length,
     importable: importable.length,
     duplicates: rows.filter((r) => r.isDuplicate).length,
-    dateAmountWarnings: rows.filter((r) => r.hasDateAmountWarning).length,
-    dateAmountWarningsIncluded: included.filter((r) => r.hasDateAmountWarning).length,
     invalidIncluded: included.filter((r) => getRowValidationError(r)).length,
   };
 }
@@ -76,17 +103,26 @@ export function buildEntriesFromPreview(rows) {
 }
 
 export function mergeImportedEntries(existingEntries, importedEntries) {
-  const existingKeys = new Set(existingEntries.map(entryKey));
+  const existingDateAmountKeys = new Set(
+    existingEntries.map((entry) => dateAmountKey(entry.date, entry.amount))
+  );
   const uniqueImported = [];
 
   for (const entry of importedEntries) {
-    const key = entryKey(entry);
-    if (existingKeys.has(key)) continue;
-    existingKeys.add(key);
+    const key = dateAmountKey(entry.date, entry.amount);
+    if (existingDateAmountKeys.has(key)) continue;
+    existingDateAmountKeys.add(key);
     uniqueImported.push(entry);
   }
 
   return [...uniqueImported, ...existingEntries];
+}
+
+export function isNewImportEntry(entry, existingEntries) {
+  const key = dateAmountKey(entry.date, entry.amount);
+  return !existingEntries.some(
+    (existing) => dateAmountKey(existing.date, existing.amount) === key
+  );
 }
 
 export function createImportPreviewState(
@@ -94,11 +130,16 @@ export function createImportPreviewState(
   meta = {},
   existingEntries = []
 ) {
+  const rows = markImportPreviewDuplicates(
+    parseResult.rows || [],
+    existingEntries
+  );
+
   return {
     ...meta,
-    rows: attachDateAmountWarnings(parseResult.rows || [], existingEntries),
+    rows,
     errors: parseResult.errors || [],
-    duplicateCount: parseResult.duplicateCount ?? 0,
+    duplicateCount: rows.filter((row) => row.isDuplicate).length,
   };
 }
 
