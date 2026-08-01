@@ -39,7 +39,14 @@ import {
   investmentCatMap,
   detectInvestmentCategory,
 } from "./investments.js";
-import { filterEntriesGlobal } from "./globalSearch.js";
+import {
+  buildCumulativeChartBundle,
+  buildTimeDrillBarTooltips,
+  formatBucketTooltipLabel,
+  getCumulativeChartSubtitle,
+} from "./cumulativeChart.js";
+import CumulativeCategoryChart from "./CumulativeCategoryChart.jsx";
+import DrillBar from "./DrillBar.jsx";
 import { findDateAmountDuplicates } from "./duplicates.js";
 import {
   createImportPreviewState,
@@ -433,6 +440,10 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
   const driveBackupRanRef = useRef(false);
   const [showRecurring, setShowRecurring] = useState(false);
   const [showExpenseDetails, setShowExpenseDetails] = useState(true);
+  const [showCumulativeChart, setShowCumulativeChart] = useState(true);
+  const [showCumulativeIncomeChart, setShowCumulativeIncomeChart] = useState(true);
+  const [showCumulativeInvestmentChart, setShowCumulativeInvestmentChart] =
+    useState(true);
   const [showInvestmentDetails, setShowInvestmentDetails] = useState(true);
   const [showIncomeDetails, setShowIncomeDetails] = useState(false);
   const importInputRef = useRef(null);
@@ -1264,6 +1275,146 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
     ? Math.max(...dailyExpenseTotals.map((t) => t.total))
     : 1;
 
+  const monthlyDrillTooltips = useMemo(() => {
+    if (periodMode !== "year" || globalSearchActive) return {};
+    const buckets = Array.from({ length: 12 }, (_, i) => {
+      const ym = `${year}-${String(i + 1).padStart(2, "0")}`;
+      return {
+        id: ym,
+        title: formatBucketTooltipLabel({ key: ym, label: monthNameOnly(ym) }),
+      };
+    });
+    const tips = buildTimeDrillBarTooltips(
+      entries,
+      buckets,
+      catMap,
+      "expense",
+      (entry, bucket) => entry.date.slice(0, 7) === bucket.id
+    );
+    return Object.fromEntries(tips.map((tip) => [tip.id, tip]));
+  }, [entries, year, periodMode, globalSearchActive]);
+
+  const weeklyDrillTooltips = useMemo(() => {
+    if (periodMode !== "month" || periodDrillDay || globalSearchActive) return {};
+    const buckets = weeklyExpenseTotals.map((week) => ({
+      id: week.startStr,
+      title: week.label,
+    }));
+    const tips = buildTimeDrillBarTooltips(
+      entries,
+      buckets,
+      catMap,
+      "expense",
+      (entry, bucket) => {
+        const range = getWeekRange(bucket.id);
+        return (
+          entry.date >= range.startStr &&
+          entry.date <= range.endStr &&
+          entry.date.slice(0, 7) === month
+        );
+      }
+    );
+    return Object.fromEntries(tips.map((tip) => [tip.id, tip]));
+  }, [entries, month, periodMode, periodDrillDay, globalSearchActive, weeklyExpenseTotals]);
+
+  const dailyDrillTooltips = useMemo(() => {
+    if (periodMode !== "week" || periodDrillDay || globalSearchActive) return {};
+    const buckets = dailyExpenseTotals.map((day) => ({
+      id: day.date,
+      title: formatBucketTooltipLabel({ key: day.date, label: day.label }),
+    }));
+    const tips = buildTimeDrillBarTooltips(
+      entries,
+      buckets,
+      catMap,
+      "expense",
+      (entry, bucket) => entry.date === bucket.id
+    );
+    return Object.fromEntries(tips.map((tip) => [tip.id, tip]));
+  }, [
+    entries,
+    periodMode,
+    periodDrillDay,
+    globalSearchActive,
+    dailyExpenseTotals,
+  ]);
+
+  const cumulativeChartContext = useMemo(
+    () => ({ year, month, weekRange, monthLabel, weekLabel }),
+    [year, month, weekRange]
+  );
+
+  const cumulativeExpenseChart = useMemo(() => {
+    if (globalSearchActive || periodDrillDay) return null;
+    return buildCumulativeChartBundle(
+      periodEntries,
+      periodMode,
+      cumulativeChartContext,
+      "expense",
+      catMap
+    );
+  }, [
+    periodEntries,
+    periodMode,
+    cumulativeChartContext,
+    globalSearchActive,
+    periodDrillDay,
+  ]);
+
+  const cumulativeIncomeChart = useMemo(() => {
+    if (globalSearchActive || periodDrillDay) return null;
+    return buildCumulativeChartBundle(
+      periodEntries,
+      periodMode,
+      cumulativeChartContext,
+      "income",
+      incomeCatMap
+    );
+  }, [
+    periodEntries,
+    periodMode,
+    cumulativeChartContext,
+    globalSearchActive,
+    periodDrillDay,
+  ]);
+
+  const cumulativeInvestmentChart = useMemo(() => {
+    if (globalSearchActive || periodDrillDay) return null;
+    return buildCumulativeChartBundle(
+      periodEntries,
+      periodMode,
+      cumulativeChartContext,
+      "investment",
+      investmentCatMap
+    );
+  }, [
+    periodEntries,
+    periodMode,
+    cumulativeChartContext,
+    globalSearchActive,
+    periodDrillDay,
+  ]);
+
+  const cumulativeExpenseSubtitle = useMemo(
+    () =>
+      getCumulativeChartSubtitle(periodMode, "expense", cumulativeChartContext),
+    [periodMode, cumulativeChartContext]
+  );
+  const cumulativeIncomeSubtitle = useMemo(
+    () =>
+      getCumulativeChartSubtitle(periodMode, "income", cumulativeChartContext),
+    [periodMode, cumulativeChartContext]
+  );
+  const cumulativeInvestmentSubtitle = useMemo(
+    () =>
+      getCumulativeChartSubtitle(
+        periodMode,
+        "investment",
+        cumulativeChartContext
+      ),
+    [periodMode, cumulativeChartContext]
+  );
+
   const categoryRuleList = useMemo(
     () =>
       Object.entries(categoryRules).map(([pattern, rule]) => ({
@@ -1700,41 +1851,6 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
     () => (importPreview ? getImportPreviewStats(importPreview.rows) : null),
     [importPreview]
   );
-
-  function renderDrillBar({
-    id,
-    label,
-    total,
-    maxTotal,
-    color,
-    active = false,
-    onClick,
-    labelWidth = 72,
-  }) {
-    return (
-      <button
-        type="button"
-        key={id}
-        className={`drill-bar${active ? " drill-bar-active" : ""}`}
-        onClick={onClick}
-        title="Click to filter"
-      >
-        <div className="drill-bar-label" style={{ width: labelWidth }}>
-          {label}
-        </div>
-        <div className="drill-bar-track">
-          <div
-            className="drill-bar-fill"
-            style={{
-              width: `${maxTotal > 0 ? (total / maxTotal) * 100 : 0}%`,
-              background: color,
-            }}
-          />
-        </div>
-        <div className="drill-bar-amount">{fmtMoney(total)}</div>
-      </button>
-    );
-  }
 
   const activeCategoryLabel =
     filterCat !== "all"
@@ -3963,6 +4079,23 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
           </div>
         )}
 
+        {cumulativeExpenseChart &&
+          (filterType === "all" || filterType === "expense") && (
+            <CollapsiblePanel
+              title="Cumulative spending"
+              meta={`${fmtMoney(cumulativeExpenseChart.stackedTotals.at(-1) || 0)} total · ${periodLabel}`}
+              open={showCumulativeChart}
+              onToggle={() => setShowCumulativeChart((v) => !v)}
+            >
+              <CumulativeCategoryChart
+                chartData={cumulativeExpenseChart.render}
+                subtitle={cumulativeExpenseSubtitle}
+                emptyMessage="No expense data to chart for this period."
+                ariaLabel="Cumulative spending by category"
+              />
+            </CollapsiblePanel>
+          )}
+
         {(catTotals.length > 0 ||
           expenseEntries.length > 0 ||
           (!globalSearchActive &&
@@ -3993,20 +4126,24 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                       Month-over-month spending &mdash; {year}
                     </div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                      {monthlyExpenseTotals.map((m) =>
-                        renderDrillBar({
-                          id: m.ym,
-                          label: m.label,
-                          total: m.total,
-                          maxTotal: maxMonthlyTotal,
-                          color: "#3C6E91",
-                          active:
+                      {monthlyExpenseTotals.map((m) => (
+                        <DrillBar
+                          key={m.ym}
+                          id={m.ym}
+                          label={m.label}
+                          total={m.total}
+                          maxTotal={maxMonthlyTotal}
+                          color="#3C6E91"
+                          active={
                             periodMode === "month" &&
                             month === m.ym &&
-                            !periodDrillDay,
-                          onClick: () => drillToMonth(m.ym),
-                        })
-                      )}
+                            !periodDrillDay
+                          }
+                          onClick={() => drillToMonth(m.ym)}
+                          tooltip={monthlyDrillTooltips[m.ym]}
+                          fmtMoney={fmtMoney}
+                        />
+                      ))}
                     </div>
                   </div>
                 )}
@@ -4029,21 +4166,25 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                       Weekly spending &mdash; {monthNameOnly(month)}
                     </div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                      {weeklyExpenseTotals.map((w) =>
-                        renderDrillBar({
-                          id: w.startStr,
-                          label: w.label,
-                          total: w.total,
-                          maxTotal: maxWeeklyTotal,
-                          color: "#3C6E91",
-                          active:
+                      {weeklyExpenseTotals.map((w) => (
+                        <DrillBar
+                          key={w.startStr}
+                          id={w.startStr}
+                          label={w.label}
+                          total={w.total}
+                          maxTotal={maxWeeklyTotal}
+                          color="#3C6E91"
+                          active={
                             periodMode === "week" &&
                             weekRange.startStr === w.startStr &&
-                            !periodDrillDay,
-                          onClick: () => drillToWeek(w.startStr),
-                          labelWidth: 118,
-                        })
-                      )}
+                            !periodDrillDay
+                          }
+                          onClick={() => drillToWeek(w.startStr)}
+                          labelWidth={118}
+                          tooltip={weeklyDrillTooltips[w.startStr]}
+                          fmtMoney={fmtMoney}
+                        />
+                      ))}
                     </div>
                   </div>
                 )}
@@ -4066,18 +4207,21 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                       Daily spending &mdash; {weekLabel(weekRange)}
                     </div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                      {dailyExpenseTotals.map((d) =>
-                        renderDrillBar({
-                          id: d.date,
-                          label: d.label,
-                          total: d.total,
-                          maxTotal: maxDailyTotal,
-                          color: "#3C6E91",
-                          active: periodDrillDay === d.date,
-                          onClick: () => drillToDay(d.date),
-                          labelWidth: 96,
-                        })
-                      )}
+                      {dailyExpenseTotals.map((d) => (
+                        <DrillBar
+                          key={d.date}
+                          id={d.date}
+                          label={d.label}
+                          total={d.total}
+                          maxTotal={maxDailyTotal}
+                          color="#3C6E91"
+                          active={periodDrillDay === d.date}
+                          onClick={() => drillToDay(d.date)}
+                          labelWidth={96}
+                          tooltip={dailyDrillTooltips[d.date]}
+                          fmtMoney={fmtMoney}
+                        />
+                      ))}
                     </div>
                   </div>
                 )}
@@ -4097,18 +4241,25 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                     Spending by category
                   </div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                    {catTotals.map((c) =>
-                      renderDrillBar({
-                        id: c.id,
-                        label: c.label,
-                        total: c.total,
-                        maxTotal: maxCatTotal,
-                        color: c.color,
-                        active: filterCat === c.id && filterType === "expense",
-                        onClick: () => drillToCategory(c.id, "expense"),
-                        labelWidth: 118,
-                      })
-                    )}
+                    {catTotals.map((c) => (
+                      <DrillBar
+                        key={c.id}
+                        id={c.id}
+                        label={c.label}
+                        total={c.total}
+                        maxTotal={maxCatTotal}
+                        color={c.color}
+                        active={filterCat === c.id && filterType === "expense"}
+                        onClick={() => drillToCategory(c.id, "expense")}
+                        labelWidth={118}
+                        tooltip={{
+                          title: c.label,
+                          total: c.total,
+                          categories: [],
+                        }}
+                        fmtMoney={fmtMoney}
+                      />
+                    ))}
                   </div>
                 </div>
               )}
@@ -4131,6 +4282,22 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
 
         {(investmentTotals.length > 0 || investmentEntries.length > 0) &&
           (filterType === "all" || filterType === "investment") && (
+            <>
+              {cumulativeInvestmentChart && (
+                <CollapsiblePanel
+                  title="Cumulative investments"
+                  meta={`${fmtMoney(cumulativeInvestmentChart.stackedTotals.at(-1) || 0)} total · ${periodLabel}`}
+                  open={showCumulativeInvestmentChart}
+                  onToggle={() => setShowCumulativeInvestmentChart((v) => !v)}
+                >
+                  <CumulativeCategoryChart
+                    chartData={cumulativeInvestmentChart.render}
+                    subtitle={cumulativeInvestmentSubtitle}
+                    emptyMessage="No investment data to chart for this period."
+                    ariaLabel="Cumulative investments by category"
+                  />
+                </CollapsiblePanel>
+              )}
             <CollapsiblePanel
               title="Investment details"
               meta={`${fmtMoney(periodInvestmentTotal)} · ${investmentEntries.length} entr${investmentEntries.length === 1 ? "y" : "ies"} · ${periodLabel}`}
@@ -4152,18 +4319,25 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                     Investments by type
                   </div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                    {investmentTotals.map((c) =>
-                      renderDrillBar({
-                        id: c.id,
-                        label: c.label,
-                        total: c.total,
-                        maxTotal: maxInvestmentTotal,
-                        color: c.color,
-                        active: filterCat === c.id && filterType === "investment",
-                        onClick: () => drillToCategory(c.id, "investment"),
-                        labelWidth: 118,
-                      })
-                    )}
+                    {investmentTotals.map((c) => (
+                      <DrillBar
+                        key={c.id}
+                        id={c.id}
+                        label={c.label}
+                        total={c.total}
+                        maxTotal={maxInvestmentTotal}
+                        color={c.color}
+                        active={filterCat === c.id && filterType === "investment"}
+                        onClick={() => drillToCategory(c.id, "investment")}
+                        labelWidth={118}
+                        tooltip={{
+                          title: c.label,
+                          total: c.total,
+                          categories: [],
+                        }}
+                        fmtMoney={fmtMoney}
+                      />
+                    ))}
                   </div>
                 </div>
               )}
@@ -4182,10 +4356,27 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
               </div>
               {renderEntryRows(investmentEntries)}
             </CollapsiblePanel>
+            </>
           )}
 
         {incomeEntries.length > 0 &&
           (filterType === "all" || filterType === "income") && (
+            <>
+              {cumulativeIncomeChart && (
+                <CollapsiblePanel
+                  title="Cumulative income"
+                  meta={`${fmtMoney(cumulativeIncomeChart.stackedTotals.at(-1) || 0)} total · ${periodLabel}`}
+                  open={showCumulativeIncomeChart}
+                  onToggle={() => setShowCumulativeIncomeChart((v) => !v)}
+                >
+                  <CumulativeCategoryChart
+                    chartData={cumulativeIncomeChart.render}
+                    subtitle={cumulativeIncomeSubtitle}
+                    emptyMessage="No income data to chart for this period."
+                    ariaLabel="Cumulative income by category"
+                  />
+                </CollapsiblePanel>
+              )}
             <CollapsiblePanel
               title="Income details"
               meta={`${fmtMoney(periodIncomeTotal)} · ${incomeEntries.length} entr${incomeEntries.length === 1 ? "y" : "ies"} · ${periodLabel}`}
@@ -4194,6 +4385,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
             >
               {renderEntryRows(incomeEntries)}
             </CollapsiblePanel>
+            </>
           )}
 
         {!loaded && (
