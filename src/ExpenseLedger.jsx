@@ -63,6 +63,7 @@ import {
   reparseImportPreviewDates,
 } from "./importPreview.js";
 import { isStorageNotFoundError, parseStoredJson } from "./storageUtils.js";
+import { filterEntriesGlobal } from "./globalSearch.js";
 
 const CATEGORIES = [
   { id: "food", label: "Food & Dining", color: "#A93B3B" },

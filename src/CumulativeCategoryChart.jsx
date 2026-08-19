@@ -76,8 +76,7 @@ export default function CumulativeCategoryChart({
         <svg
           viewBox={`0 0 ${width} ${height}`}
           width="100%"
-          height="auto"
-          style={{ display: "block", minHeight: 200 }}
+          style={{ display: "block", height: "auto", minHeight: 200 }}
           role="img"
           aria-label={ariaLabel}
           onMouseMove={handleMouseMove}
