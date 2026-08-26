@@ -102,7 +102,21 @@ export function buildEntriesFromPreview(rows) {
     }));
 }
 
-export function mergeImportedEntries(existingEntries, importedEntries) {
+export function getIncludedDuplicateRows(rows) {
+  return rows.filter(
+    (row) => row.included && row.isDuplicate && !getRowValidationError(row)
+  );
+}
+
+export function mergeImportedEntries(
+  existingEntries,
+  importedEntries,
+  { allowDateAmountDuplicates = false } = {}
+) {
+  if (allowDateAmountDuplicates) {
+    return [...importedEntries, ...existingEntries];
+  }
+
   const existingDateAmountKeys = new Set(
     existingEntries.map((entry) => dateAmountKey(entry.date, entry.amount))
   );

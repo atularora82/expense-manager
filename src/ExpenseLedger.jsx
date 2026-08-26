@@ -54,6 +54,7 @@ import {
   setAllImportPreviewIncluded,
   getImportPreviewStats,
   buildEntriesFromPreview,
+  getIncludedDuplicateRows,
   getRowValidationError,
   mergeImportedEntries,
   buildImportConfirmationSummary,
@@ -427,6 +428,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
   const [voiceNote, setVoiceNote] = useState("");
   const [importNote, setImportNote] = useState("");
   const [importPreview, setImportPreview] = useState(null);
+  const [importForceConfirm, setImportForceConfirm] = useState(null);
   const [importConfirm, setImportConfirm] = useState(null);
   const [statementImport, setStatementImport] = useState(null);
   const [statementProfiles, setStatementProfiles] = useState({});
@@ -1591,9 +1593,17 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
       }
       return { ...prev, rows };
     });
+    if (
+      patch.included !== undefined ||
+      patch.date !== undefined ||
+      patch.amount !== undefined
+    ) {
+      setImportForceConfirm(null);
+    }
   }
 
   function setAllImportRowsIncluded(included) {
+    setImportForceConfirm(null);
     setImportPreview((prev) =>
       prev
         ? { ...prev, rows: setAllImportPreviewIncluded(prev.rows, included) }
@@ -1601,42 +1611,46 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
     );
   }
 
-  function confirmImport() {
+  function confirmImport(forceDuplicates = false) {
     if (!importPreview) return;
     const imported = buildEntriesFromPreview(importPreview.rows);
-    const newEntries = imported.filter((entry) =>
-      isNewImportEntry(entry, entries)
-    );
-    let mergedCount = 0;
+    const forceIncludedDuplicates = getIncludedDuplicateRows(importPreview.rows);
 
-    if (newEntries.length > 0) {
-      setEntries((prev) => {
-        const merged = mergeImportedEntries(prev, imported);
-        mergedCount = merged.length - prev.length;
-        return merged;
-      });
-      learnCategoryRulesFromEntries(newEntries);
+    if (!forceDuplicates && forceIncludedDuplicates.length > 0) {
+      setImportForceConfirm({ count: forceIncludedDuplicates.length });
+      return;
+    }
+
+    setImportForceConfirm(null);
+    const allowDateAmountDuplicates =
+      forceDuplicates && forceIncludedDuplicates.length > 0;
+    const addedEntries = allowDateAmountDuplicates
+      ? imported
+      : imported.filter((entry) => isNewImportEntry(entry, entries));
+
+    if (addedEntries.length > 0) {
+      setEntries((prev) =>
+        mergeImportedEntries(prev, imported, { allowDateAmountDuplicates })
+      );
+      learnCategoryRulesFromEntries(addedEntries);
     }
 
     if (importPreview.errors.length > 0) {
       console.warn("Import parse errors:", importPreview.errors);
     }
 
-    const dateAmountWarningCount = importPreview.rows.filter(
-      (row) =>
-        row.included && row.isDuplicate && !getRowValidationError(row)
-    ).length;
-
     setImportConfirm({
       ...buildImportConfirmationSummary({
         rows: importPreview.rows,
         errors: importPreview.errors,
         fileName: importPreview.fileName,
-        mergedEntries: newEntries,
-        mergedCount: newEntries.length,
+        mergedEntries: addedEntries,
+        mergedCount: addedEntries.length,
       }),
       label: defaultImportLabel(importPreview.fileName),
-      dateAmountWarningCount,
+      dateAmountWarningCount: allowDateAmountDuplicates
+        ? forceIncludedDuplicates.length
+        : 0,
     });
     setImportPreview(null);
   }
@@ -3876,12 +3890,53 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                 </div>
               )}
 
+              {importForceConfirm && (
+                <div
+                  style={{
+                    fontSize: 13,
+                    color: "#8B5E34",
+                    marginBottom: 12,
+                    border: "1px solid #E4C88A",
+                    background: "#FBF3E6",
+                    borderRadius: 6,
+                    padding: "12px 14px",
+                  }}
+                >
+                  <div style={{ fontWeight: 600, marginBottom: 6 }}>
+                    Import duplicate entries?
+                  </div>
+                  <div style={{ marginBottom: 12, lineHeight: 1.5 }}>
+                    {importForceConfirm.count} selected entr
+                    {importForceConfirm.count === 1 ? "y has" : "ies have"} the same
+                    date &amp; amount as an existing record. They will be added as
+                    separate entries if you continue.
+                  </div>
+                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                    <button
+                      type="button"
+                      className="ledger-btn"
+                      onClick={() => confirmImport(true)}
+                    >
+                      Import anyway ({importForceConfirm.count} duplicate
+                      {importForceConfirm.count === 1 ? "" : "s"})
+                    </button>
+                    <button
+                      type="button"
+                      className="ledger-btn ledger-btn-ghost"
+                      onClick={() => setImportForceConfirm(null)}
+                    >
+                      Go back
+                    </button>
+                  </div>
+                </div>
+              )}
+
               <div style={{ display: "flex", gap: 10, flexShrink: 0 }}>
                 <button
                   type="button"
                   className="ledger-btn"
-                  onClick={confirmImport}
-                  disabled={importPreviewStats.importable === 0}
+                  onClick={() => confirmImport(false)}
+                  disabled={importPreviewStats.importable === 0 || importForceConfirm}
                 >
                   Import {importPreviewStats.importable} entr
                   {importPreviewStats.importable === 1 ? "y" : "ies"}
@@ -3889,7 +3944,10 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                 <button
                   type="button"
                   className="ledger-btn ledger-btn-ghost"
-                  onClick={() => setImportPreview(null)}
+                  onClick={() => {
+                    setImportForceConfirm(null);
+                    setImportPreview(null);
+                  }}
                 >
                   Cancel
                 </button>
