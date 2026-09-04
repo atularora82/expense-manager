@@ -1,6 +1,13 @@
-export const BACKUP_VERSION = 1;
+export const BACKUP_VERSION = 2;
 
-export function createBackup({ entries, budgets, recurring, categoryRules }) {
+export function createBackup({
+  entries,
+  budgets,
+  recurring,
+  categoryRules,
+  accounts = [],
+  savingsGoals = [],
+}) {
   return {
     version: BACKUP_VERSION,
     exportedAt: new Date().toISOString(),
@@ -8,6 +15,8 @@ export function createBackup({ entries, budgets, recurring, categoryRules }) {
     budgets,
     recurring,
     categoryRules,
+    accounts,
+    savingsGoals,
   };
 }
 
@@ -29,6 +38,8 @@ export function parseBackupFile(text) {
       data.categoryRules && typeof data.categoryRules === "object"
         ? data.categoryRules
         : {},
+    accounts: Array.isArray(data.accounts) ? data.accounts : [],
+    savingsGoals: Array.isArray(data.savingsGoals) ? data.savingsGoals : [],
   };
 }
 

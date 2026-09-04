@@ -65,6 +65,21 @@ import {
 } from "./importPreview.js";
 import { isStorageNotFoundError, parseStoredJson } from "./storageUtils.js";
 import { filterEntriesGlobal } from "./globalSearch.js";
+import { buildSavingTips } from "./savingTips.js";
+import SavingTipsPanel from "./SavingTipsPanel.jsx";
+import { createAccount, normalizeAccounts, accountLabel } from "./accounts.js";
+import {
+  createSavingsGoal,
+  normalizeSavingsGoals,
+} from "./savingsGoals.js";
+import {
+  detectRecurringPatterns,
+  suggestionToRecurringTemplate,
+} from "./recurringDetection.js";
+import { buildPeriodReport } from "./periodReport.js";
+import PeriodReportModal from "./PeriodReportModal.jsx";
+import SavingsGoalsPanel from "./SavingsGoalsPanel.jsx";
+import AccountsPanel from "./AccountsPanel.jsx";
 
 const CATEGORIES = [
   { id: "food", label: "Food & Dining", color: "#A93B3B" },
@@ -396,6 +411,11 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
   const [budgetsLoaded, setBudgetsLoaded] = useState(false);
   const [budgetDrafts, setBudgetDrafts] = useState({});
 
+  const [accounts, setAccounts] = useState([]);
+  const [accountsLoaded, setAccountsLoaded] = useState(false);
+  const [savingsGoals, setSavingsGoals] = useState([]);
+  const [savingsGoalsLoaded, setSavingsGoalsLoaded] = useState(false);
+
   const [recurring, setRecurring] = useState([]);
   const [recurringLoaded, setRecurringLoaded] = useState(false);
   const [categoryRules, setCategoryRules] = useState({});
@@ -408,6 +428,8 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
   const [date, setDate] = useState(todayStr());
   const [formRecurring, setFormRecurring] = useState(false);
   const [formRecurringFreq, setFormRecurringFreq] = useState("monthly");
+  const [formAccountId, setFormAccountId] = useState("");
+  const [formHidden, setFormHidden] = useState(false);
   const [categoryLocked, setCategoryLocked] = useState(false);
   const [duplicateBypass, setDuplicateBypass] = useState(false);
   const [formError, setFormError] = useState("");
@@ -421,6 +443,8 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
 
   const [filterType, setFilterType] = useState("all");
   const [filterCat, setFilterCat] = useState("all");
+  const [filterAccount, setFilterAccount] = useState("all");
+  const [showHidden, setShowHidden] = useState(false);
   const [search, setSearch] = useState("");
 
   const [isListening, setIsListening] = useState(false);
@@ -449,6 +473,14 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
     useState(true);
   const [showInvestmentDetails, setShowInvestmentDetails] = useState(true);
   const [showIncomeDetails, setShowIncomeDetails] = useState(false);
+  const [showSavingTips, setShowSavingTips] = useState(true);
+  const [showAccounts, setShowAccounts] = useState(false);
+  const [showSavingsGoals, setShowSavingsGoals] = useState(true);
+  const [periodReport, setPeriodReport] = useState(null);
+  const [importAccountId, setImportAccountId] = useState("");
+  const [bulkSelectMode, setBulkSelectMode] = useState(false);
+  const [selectedEntryIds, setSelectedEntryIds] = useState([]);
+  const [bulkAssignAccountId, setBulkAssignAccountId] = useState("");
   const importInputRef = useRef(null);
   const statementInputRef = useRef(null);
   const backupInputRef = useRef(null);
@@ -488,6 +520,8 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
         profilesResult,
         rulesResult,
         scheduleResult,
+        accountsResult,
+        goalsResult,
       ] = await Promise.all([
         readKey("ledger-entries"),
         readKey("ledger-budgets"),
@@ -495,6 +529,8 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
         readKey("ledger-statement-profiles"),
         readKey("ledger-category-rules"),
         readKey(BACKUP_SCHEDULE_KEY),
+        readKey("ledger-accounts"),
+        readKey("ledger-savings-goals"),
       ]);
 
       if (cancelled) return;
@@ -509,6 +545,8 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
         setProfilesLoaded(true);
         setRulesLoaded(true);
         setBackupScheduleLoaded(true);
+        setAccountsLoaded(true);
+        setSavingsGoalsLoaded(true);
         return;
       }
 
@@ -538,6 +576,12 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
       if (scheduleResult.ok && scheduleResult.value) {
         setBackupSchedule(normalizeBackupSchedule(parseStoredJson(scheduleResult.value, {})));
       }
+      if (accountsResult.ok && accountsResult.value) {
+        setAccounts(normalizeAccounts(parseStoredJson(accountsResult.value, [])));
+      }
+      if (goalsResult.ok && goalsResult.value) {
+        setSavingsGoals(normalizeSavingsGoals(parseStoredJson(goalsResult.value, [])));
+      }
 
       setLoaded(true);
       setBudgetsLoaded(true);
@@ -545,6 +589,8 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
       setProfilesLoaded(true);
       setRulesLoaded(true);
       setBackupScheduleLoaded(true);
+      setAccountsLoaded(true);
+      setSavingsGoalsLoaded(true);
       setStorageHydrated(true);
     })();
 
@@ -587,6 +633,28 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
       }
     })();
   }, [budgets, budgetsLoaded]);
+
+  useEffect(() => {
+    if (!storageHydrated || !accountsLoaded) return;
+    (async () => {
+      try {
+        await window.storage.set("ledger-accounts", JSON.stringify(accounts));
+      } catch (e) {
+        // ignore
+      }
+    })();
+  }, [accounts, accountsLoaded]);
+
+  useEffect(() => {
+    if (!storageHydrated || !savingsGoalsLoaded) return;
+    (async () => {
+      try {
+        await window.storage.set("ledger-savings-goals", JSON.stringify(savingsGoals));
+      } catch (e) {
+        // ignore
+      }
+    })();
+  }, [savingsGoals, savingsGoalsLoaded]);
 
   useEffect(() => {
     if (!storageHydrated || !recurringLoaded) return;
@@ -677,6 +745,8 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
     setDate(todayStr());
     setFormRecurring(false);
     setFormRecurringFreq("monthly");
+    setFormAccountId("");
+    setFormHidden(false);
     setCategoryLocked(false);
     setDuplicateBypass(false);
     setEditingId(null);
@@ -738,6 +808,8 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                 category: savedCategory,
                 date: date || todayStr(),
                 type: formType,
+                accountId: formAccountId || undefined,
+                hidden: formHidden,
               }
             : en
         )
@@ -751,6 +823,8 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
         category: savedCategory,
         date: date || todayStr(),
         recordedAt: new Date().toISOString(),
+        ...(formAccountId ? { accountId: formAccountId } : {}),
+        ...(formHidden ? { hidden: true } : {}),
       };
       setEntries((prev) => [newEntry, ...prev]);
 
@@ -834,10 +908,22 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
     setDesc(en.description);
     setCategory(resolveFormCategory(en.type, en.category));
     setDate(en.date);
+    setFormAccountId(en.accountId || "");
+    setFormHidden(Boolean(en.hidden));
     setFormRecurring(false);
     setCategoryLocked(true);
     setDuplicateBypass(false);
     setFormError("");
+    setShowManualEntry(true);
+  }
+
+  function toggleEntryHidden(id) {
+    setEntries((prev) =>
+      prev.map((en) => (en.id === id ? { ...en, hidden: !en.hidden } : en))
+    );
+    if (editingId === id) {
+      setFormHidden((v) => !v);
+    }
   }
 
   function handleDelete(id) {
@@ -932,14 +1018,31 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
     if (!months.includes(month)) setMonth(months[0]);
   }, [periodMode, months, month]);
 
+  const globalSearchActive = Boolean(search.trim());
+
+  const hiddenEntryCount = useMemo(
+    () => entries.filter((e) => e.hidden).length,
+    [entries]
+  );
+
+  const scopedEntries = useMemo(() => {
+    let list = entries;
+    if (!showHidden) {
+      list = list.filter((e) => !e.hidden);
+    }
+    if (globalSearchActive) return list;
+    if (filterAccount === "all") return list;
+    return list.filter((e) => e.accountId === filterAccount);
+  }, [entries, filterAccount, globalSearchActive, showHidden]);
+
   const periodEntries = useMemo(() => {
     let list;
     if (periodMode === "year") {
-      list = entries.filter((e) => e.date.slice(0, 4) === year);
+      list = scopedEntries.filter((e) => e.date.slice(0, 4) === year);
     } else if (periodMode === "month") {
-      list = entries.filter((e) => e.date.slice(0, 7) === month);
+      list = scopedEntries.filter((e) => e.date.slice(0, 7) === month);
     } else {
-      list = entries.filter(
+      list = scopedEntries.filter(
         (e) => e.date >= weekRange.startStr && e.date <= weekRange.endStr
       );
     }
@@ -947,7 +1050,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
       list = list.filter((e) => e.date === periodDrillDay);
     }
     return list;
-  }, [entries, periodMode, year, month, weekRange, periodDrillDay]);
+  }, [scopedEntries, periodMode, year, month, weekRange, periodDrillDay]);
 
   const periodLabel = periodDrillDay
     ? fmtDateFull(periodDrillDay)
@@ -999,11 +1102,13 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
     setFilterCat("all");
   }
 
-  const globalSearchActive = Boolean(search.trim());
-
   const displayEntries = useMemo(() => {
     if (globalSearchActive) {
-      return filterEntriesGlobal(entries, search, catInfoFor, {
+      let list = entries;
+      if (!showHidden) {
+        list = list.filter((e) => !e.hidden);
+      }
+      return filterEntriesGlobal(list, search, catInfoFor, {
         type: filterType,
         category: filterCat,
       });
@@ -1019,6 +1124,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
     filterCat,
     search,
     globalSearchActive,
+    showHidden,
   ]);
 
   const expenseEntries = useMemo(
@@ -1033,6 +1139,44 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
     () => displayEntries.filter((e) => e.type === "income"),
     [displayEntries]
   );
+
+  function toggleEntrySelection(id) {
+    setSelectedEntryIds((prev) =>
+      prev.includes(id) ? prev.filter((entryId) => entryId !== id) : [...prev, id]
+    );
+  }
+
+  function selectAllVisibleEntries() {
+    setSelectedEntryIds(displayEntries.map((e) => e.id));
+  }
+
+  function clearEntrySelection() {
+    setSelectedEntryIds([]);
+    setBulkSelectMode(false);
+    setBulkAssignAccountId("");
+  }
+
+  function bulkAssignAccount(accountId) {
+    if (selectedEntryIds.length === 0) return;
+    const ids = new Set(selectedEntryIds);
+    const count = selectedEntryIds.length;
+    setEntries((prev) =>
+      prev.map((en) => {
+        if (!ids.has(en.id)) return en;
+        if (!accountId) {
+          const { accountId: _removed, ...rest } = en;
+          return rest;
+        }
+        return { ...en, accountId };
+      })
+    );
+    setImportNote(
+      `Assigned ${count} entr${count === 1 ? "y" : "ies"} to ${
+        accountId ? accountLabel(accounts, accountId) || "account" : "no account"
+      }.`
+    );
+    clearEntrySelection();
+  }
 
   function renderEntryRows(list) {
     if (list.length === 0) {
@@ -1061,6 +1205,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
             ? "#4A5A91"
             : "#1F2A22";
           const amountPrefix = isIncome ? "+" : isInvestment ? "↗" : "-";
+          const isSelected = selectedEntryIds.includes(en.id);
           return (
             <div
               key={en.id}
@@ -1071,8 +1216,19 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                 gap: 14,
                 padding: "13px 18px",
                 borderTop: i === 0 ? "none" : "1px dashed #E4DCC5",
+                opacity: en.hidden ? 0.65 : 1,
+                background: isSelected ? "#F0EBDD" : en.hidden ? "#FAF7F0" : undefined,
               }}
             >
+              {bulkSelectMode && accounts.length > 0 && (
+                <input
+                  type="checkbox"
+                  className="import-preview-check"
+                  checked={isSelected}
+                  onChange={() => toggleEntrySelection(en.id)}
+                  aria-label={`Select ${en.description}`}
+                />
+              )}
               <div
                 style={{
                   fontFamily: "'IBM Plex Mono', monospace",
@@ -1102,6 +1258,11 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                 >
                   {en.description}
                 </div>
+                {en.hidden && (
+                  <div style={{ fontSize: 11, color: "#A69C82", marginTop: 3 }}>
+                    Hidden from totals &amp; reports
+                  </div>
+                )}
                 {en.label && (
                   <div
                     style={{
@@ -1111,6 +1272,11 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                     }}
                   >
                     {en.label}
+                  </div>
+                )}
+                {en.accountId && accountLabel(accounts, en.accountId) && (
+                  <div style={{ fontSize: 11, color: "#A69C82", marginTop: 3 }}>
+                    {accountLabel(accounts, en.accountId)}
                   </div>
                 )}
               </div>
@@ -1134,7 +1300,21 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                 {amountPrefix}
                 {fmtMoney(en.amount)}
               </div>
-              <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+              <div style={{ display: "flex", gap: 4, flexShrink: 0, flexWrap: "wrap" }}>
+                <button
+                  onClick={() => toggleEntryHidden(en.id)}
+                  title={en.hidden ? "Show in ledger" : "Hide from ledger"}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    cursor: "pointer",
+                    color: en.hidden ? "#3C6E91" : "#74836A",
+                    fontSize: 13,
+                    padding: 4,
+                  }}
+                >
+                  {en.hidden ? "Unhide" : "Hide"}
+                </button>
                 <button
                   onClick={() => handleEdit(en)}
                   title="Edit"
@@ -1223,6 +1403,40 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
 
   const maxCatTotal = catTotals.length ? catTotals[0].total : 1;
 
+  const savingTips = useMemo(
+    () =>
+      globalSearchActive
+        ? []
+        : buildSavingTips({
+            entries,
+            periodEntries,
+            periodMode,
+            periodLabel,
+            month,
+            budgets,
+            catMap,
+            periodIncomeTotal,
+            periodExpenseTotal,
+            periodInvestmentTotal,
+            catTotals,
+            savingsGoals,
+          }),
+    [
+      entries,
+      periodEntries,
+      periodMode,
+      periodLabel,
+      month,
+      budgets,
+      periodIncomeTotal,
+      periodExpenseTotal,
+      periodInvestmentTotal,
+      catTotals,
+      savingsGoals,
+      globalSearchActive,
+    ]
+  );
+
   const investmentTotals = useMemo(() => {
     const map = {};
     periodEntries
@@ -1240,17 +1454,43 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
     ? investmentTotals[0].total
     : 1;
 
+  const incomeTotals = useMemo(() => {
+    const map = {};
+    periodEntries
+      .filter((e) => e.type === "income")
+      .forEach((e) => {
+        map[e.category] = (map[e.category] || 0) + e.amount;
+      });
+    return Object.entries(map)
+      .map(([id, total]) => ({ id, total, ...incomeCatMap[id] }))
+      .filter((c) => c.label)
+      .sort((a, b) => b.total - a.total);
+  }, [periodEntries]);
+
+  const maxIncomeTotal = incomeTotals.length ? incomeTotals[0].total : 1;
+
+  const recurringSuggestions = useMemo(
+    () =>
+      globalSearchActive
+        ? []
+        : detectRecurringPatterns(
+            entries.filter((e) => !e.hidden),
+            { existingRecurring: recurring }
+          ),
+    [entries, recurring, globalSearchActive]
+  );
+
   const monthlyExpenseTotals = useMemo(() => {
     if (periodMode !== "year") return [];
     const totals = Array.from({ length: 12 }, (_, i) => {
       const ym = `${year}-${String(i + 1).padStart(2, "0")}`;
-      const total = entries
+      const total = scopedEntries
         .filter((e) => e.type === "expense" && e.date.slice(0, 7) === ym)
         .reduce((s, e) => s + e.amount, 0);
       return { ym, total, label: monthNameOnly(ym) };
     });
     return totals.filter((t) => t.total > 0);
-  }, [entries, year, periodMode]);
+  }, [scopedEntries, year, periodMode]);
 
   const maxMonthlyTotal = monthlyExpenseTotals.length
     ? Math.max(...monthlyExpenseTotals.map((t) => t.total))
@@ -1258,8 +1498,8 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
 
   const weeklyExpenseTotals = useMemo(() => {
     if (periodMode !== "month" || periodDrillDay) return [];
-    return getWeeklyExpenseTotals(entries, month);
-  }, [entries, month, periodMode, periodDrillDay]);
+    return getWeeklyExpenseTotals(scopedEntries, month);
+  }, [scopedEntries, month, periodMode, periodDrillDay]);
 
   const maxWeeklyTotal = weeklyExpenseTotals.length
     ? Math.max(...weeklyExpenseTotals.map((t) => t.total))
@@ -1268,11 +1508,11 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
   const dailyExpenseTotals = useMemo(() => {
     if (periodMode !== "week" || periodDrillDay) return [];
     return getDailyExpenseTotals(
-      entries,
+      scopedEntries,
       weekRange.startStr,
       weekRange.endStr
     );
-  }, [entries, weekRange, periodMode, periodDrillDay]);
+  }, [scopedEntries, weekRange, periodMode, periodDrillDay]);
 
   const maxDailyTotal = dailyExpenseTotals.length
     ? Math.max(...dailyExpenseTotals.map((t) => t.total))
@@ -1611,9 +1851,67 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
     );
   }
 
+  function addAccount(name, type) {
+    const account = createAccount(name, type);
+    if (!account) return false;
+    setAccounts((prev) => [...prev, account]);
+    return true;
+  }
+
+  function removeAccount(id) {
+    setAccounts((prev) => prev.filter((a) => a.id !== id));
+    if (filterAccount === id) setFilterAccount("all");
+    if (formAccountId === id) setFormAccountId("");
+    if (importAccountId === id) setImportAccountId("");
+    setEntries((prev) =>
+      prev.map((e) => (e.accountId === id ? { ...e, accountId: undefined } : e))
+    );
+  }
+
+  function addSavingsGoal(payload) {
+    const goal = createSavingsGoal(payload);
+    if (!goal) return false;
+    setSavingsGoals((prev) => [...prev, goal]);
+    return true;
+  }
+
+  function updateSavingsGoal(id, patch) {
+    setSavingsGoals((prev) =>
+      prev.map((g) => (g.id === id ? { ...g, ...patch } : g))
+    );
+  }
+
+  function removeSavingsGoal(id) {
+    setSavingsGoals((prev) => prev.filter((g) => g.id !== id));
+  }
+
+  function openPeriodReport() {
+    setPeriodReport(
+      buildPeriodReport({
+        periodLabel,
+        periodEntries,
+        budgets,
+        catInfoFor,
+        expenseCategories: CATEGORIES,
+      })
+    );
+  }
+
+  function printPeriodReport() {
+    window.print();
+  }
+
+  function addRecurringSuggestion(suggestion) {
+    setRecurring((prev) => [...prev, suggestionToRecurringTemplate(suggestion)]);
+  }
+
   function confirmImport(forceDuplicates = false) {
     if (!importPreview) return;
-    const imported = buildEntriesFromPreview(importPreview.rows);
+    const accountId =
+      importPreview.accountId || importAccountId || undefined;
+    const imported = buildEntriesFromPreview(importPreview.rows).map((entry) =>
+      accountId ? { ...entry, accountId } : entry
+    );
     const forceIncludedDuplicates = getIncludedDuplicateRows(importPreview.rows);
 
     if (!forceDuplicates && forceIncludedDuplicates.length > 0) {
@@ -1700,7 +1998,14 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
   }
 
   function buildCurrentBackup() {
-    return createBackup({ entries, budgets, recurring, categoryRules });
+    return createBackup({
+      entries,
+      budgets,
+      recurring,
+      categoryRules,
+      accounts,
+      savingsGoals,
+    });
   }
 
   function exportBackup() {
@@ -1715,6 +2020,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
     }
     if (driveBackupBusy) return false;
 
+    const interactive = manual || forceAuth;
     setDriveBackupBusy(true);
     if (manual) setBackupNote("");
     try {
@@ -1724,6 +2030,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
         backup: buildCurrentBackup(),
         schedule: backupSchedule,
         forceAuth,
+        interactive,
       });
       const nextSchedule = markBackupCompleted({
         ...backupSchedule,
@@ -1737,9 +2044,17 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
       );
       return true;
     } catch (err) {
+      const authRequired = err?.code === "drive/auth-required";
       const message = err?.message || "Google Drive backup failed.";
-      setBackupNote(manual ? message : `Scheduled backup skipped: ${message}`);
-      console.error(err);
+      if (manual) {
+        setBackupNote(message);
+        console.error(err);
+      } else if (authRequired) {
+        // Token expired — skip silently; user can re-auth via manual backup.
+      } else {
+        setBackupNote(`Scheduled backup skipped: ${message}`);
+        console.warn(err);
+      }
       return false;
     } finally {
       setDriveBackupBusy(false);
@@ -1797,6 +2112,8 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
       setBudgets(data.budgets);
       setRecurring(data.recurring);
       setCategoryRules(data.categoryRules);
+      setAccounts(normalizeAccounts(data.accounts));
+      setSavingsGoals(normalizeSavingsGoals(data.savingsGoals));
       setBackupNote(
         `Restored backup from ${data.exportedAt ? data.exportedAt.slice(0, 10) : "file"} (${data.entries.length} entries).`
       );
@@ -1806,13 +2123,14 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
   }
 
   function exportCSV() {
-    const header = ["Date", "Type", "Category", "Description", "Amount (INR)"];
+    const header = ["Date", "Type", "Category", "Account", "Description", "Amount (INR)"];
     const rows = displayEntries.map((en) => {
       const info = catInfoFor(en.type, en.category);
       return [
         en.date,
         en.type,
         info ? info.label : en.category,
+        accountLabel(accounts, en.accountId) || "",
         en.description,
         en.amount.toFixed(2),
       ];
@@ -2101,6 +2419,21 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
         @media (max-width: 720px) {
           .lg-grid { grid-template-columns: 1fr !important; }
           .lg-header { flex-direction: column !important; align-items: flex-start !important; gap: 16px !important; }
+          .goals-form-grid, .accounts-form-grid { grid-template-columns: 1fr !important; }
+        }
+        @media print {
+          body * { visibility: hidden; }
+          .period-report-print, .period-report-print * { visibility: visible; }
+          .period-report-print {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100%;
+            padding: 24px;
+          }
+          .period-report-actions { display: none !important; }
+          .ledger-modal-backdrop { position: static; background: none; }
+          .ledger-modal { box-shadow: none; border: none; max-height: none; }
         }
       `}</style>
 
@@ -2683,6 +3016,36 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
             </div>
           </div>
 
+          {accounts.length > 0 && (
+            <div style={{ marginBottom: 14 }}>
+              <label
+                style={{
+                  fontSize: 11,
+                  fontWeight: 600,
+                  color: "#74836A",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.06em",
+                  display: "block",
+                  marginBottom: 5,
+                }}
+              >
+                Account
+              </label>
+              <select
+                className="ledger-select"
+                value={formAccountId}
+                onChange={(e) => setFormAccountId(e.target.value)}
+              >
+                <option value="">No account</option>
+                {accounts.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
           <div style={{ marginBottom: 14 }}>
             <label
               style={{
@@ -2757,6 +3120,33 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
               )}
             </div>
           )}
+
+          <div style={{ marginBottom: 14 }}>
+            <label
+              style={{
+                display: "flex",
+                alignItems: "flex-start",
+                gap: 8,
+                fontSize: 13,
+                color: "#4A5A4E",
+                cursor: "pointer",
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={formHidden}
+                onChange={(e) => setFormHidden(e.target.checked)}
+                style={{ marginTop: 2 }}
+              />
+              <span>
+                Hide from ledger
+                <span style={{ display: "block", fontSize: 12, color: "#74836A", marginTop: 2 }}>
+                  Excluded from totals, charts, and reports — useful for salary or
+                  sensitive income.
+                </span>
+              </span>
+            </label>
+          </div>
 
           {duplicateMatches.length > 0 && (
             <div
@@ -2883,7 +3273,80 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
           </button>
           {showRecurring && (
             <div style={{ borderTop: "1px dashed #E4DCC5", padding: "12px 18px 16px" }}>
-              {recurring.length === 0 ? (
+              {recurringSuggestions.length > 0 && (
+                <div style={{ marginBottom: 16 }}>
+                  <div
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 600,
+                      letterSpacing: "0.1em",
+                      textTransform: "uppercase",
+                      color: "#74836A",
+                      marginBottom: 8,
+                    }}
+                  >
+                    Detected patterns
+                  </div>
+                  <div style={{ fontSize: 12.5, color: "#74836A", marginBottom: 10 }}>
+                    These look like subscriptions or regular payments from your ledger.
+                  </div>
+                  {recurringSuggestions.map((s) => {
+                    const cat = catInfoFor(s.type, s.category);
+                    return (
+                      <div
+                        key={s.id}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 12,
+                          padding: "10px 0",
+                          borderTop: "1px dashed #E4DCC5",
+                          flexWrap: "wrap",
+                        }}
+                      >
+                        <div style={{ flex: 1, minWidth: 140 }}>
+                          <div style={{ fontSize: 14, color: "#1F2A22" }}>{s.description}</div>
+                          <div style={{ fontSize: 12, color: "#74836A", marginTop: 2 }}>
+                            {s.frequency === "weekly" ? "Weekly" : "Monthly"} &middot;{" "}
+                            {s.occurrences} times
+                          </div>
+                        </div>
+                        {cat && (
+                          <div
+                            className="cat-stamp"
+                            style={{ color: cat.color, borderColor: cat.color }}
+                          >
+                            {cat.label}
+                          </div>
+                        )}
+                        <div
+                          style={{
+                            fontFamily: "'IBM Plex Mono', monospace",
+                            fontSize: 13,
+                            fontWeight: 600,
+                          }}
+                        >
+                          {fmtMoney(s.amount)}
+                        </div>
+                        <button
+                          type="button"
+                          className="ledger-btn ledger-btn-ghost"
+                          style={{
+                            textTransform: "none",
+                            letterSpacing: "normal",
+                            fontWeight: 500,
+                            padding: "6px 10px",
+                          }}
+                          onClick={() => addRecurringSuggestion(s)}
+                        >
+                          Add recurring
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {recurring.length === 0 && recurringSuggestions.length === 0 ? (
                 <div style={{ fontSize: 13, color: "#74836A" }}>
                   No recurring entries yet. Check &ldquo;Repeat this entry&rdquo; when adding Netflix, rent, salary, etc.
                 </div>
@@ -3169,6 +3632,21 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
               </>
             )}
           </select>
+          {accounts.length > 0 && (
+            <select
+              className="ledger-select"
+              style={{ width: "auto", minWidth: 150 }}
+              value={filterAccount}
+              onChange={(e) => setFilterAccount(e.target.value)}
+            >
+              <option value="all">All accounts</option>
+              {accounts.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                </option>
+              ))}
+            </select>
+          )}
           <button
             type="button"
             className="ledger-btn ledger-btn-ghost"
@@ -3177,6 +3655,15 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
             disabled={displayEntries.length === 0}
           >
             Export CSV
+          </button>
+          <button
+            type="button"
+            className="ledger-btn ledger-btn-ghost"
+            style={{ textTransform: "none", letterSpacing: "normal", fontWeight: 500 }}
+            onClick={openPeriodReport}
+            disabled={periodEntries.length === 0 || globalSearchActive}
+          >
+            Period report
           </button>
           <button
             type="button"
@@ -3201,7 +3688,117 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
           >
             Restore
           </button>
+          {hiddenEntryCount > 0 && (
+            <label
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                fontSize: 12.5,
+                color: "#74836A",
+                cursor: "pointer",
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={showHidden}
+                onChange={(e) => setShowHidden(e.target.checked)}
+              />
+              Show hidden ({hiddenEntryCount})
+            </label>
+          )}
+          {accounts.length > 0 && (
+            <button
+              type="button"
+              className="ledger-btn ledger-btn-ghost"
+              style={{
+                textTransform: "none",
+                letterSpacing: "normal",
+                fontWeight: 500,
+                ...(bulkSelectMode ? { borderColor: "#3C6E91", color: "#3C6E91" } : {}),
+              }}
+              onClick={() => {
+                if (bulkSelectMode) {
+                  clearEntrySelection();
+                } else {
+                  setBulkSelectMode(true);
+                }
+              }}
+            >
+              {bulkSelectMode ? "Cancel selection" : "Select entries"}
+            </button>
+          )}
         </div>
+
+        {bulkSelectMode && accounts.length > 0 && (
+          <div
+            style={{
+              display: "flex",
+              gap: 10,
+              marginBottom: 16,
+              flexWrap: "wrap",
+              alignItems: "center",
+              padding: "12px 14px",
+              background: "#F6F1E6",
+              border: "1px solid #E4DCC5",
+              borderRadius: 8,
+            }}
+          >
+            <span style={{ fontSize: 13, color: "#1F2A22", fontWeight: 600 }}>
+              {selectedEntryIds.length} selected
+            </span>
+            <button
+              type="button"
+              className="ledger-btn ledger-btn-ghost"
+              style={{
+                textTransform: "none",
+                letterSpacing: "normal",
+                fontWeight: 500,
+                padding: "7px 12px",
+              }}
+              onClick={selectAllVisibleEntries}
+              disabled={displayEntries.length === 0}
+            >
+              Select all visible ({displayEntries.length})
+            </button>
+            <button
+              type="button"
+              className="ledger-btn ledger-btn-ghost"
+              style={{
+                textTransform: "none",
+                letterSpacing: "normal",
+                fontWeight: 500,
+                padding: "7px 12px",
+              }}
+              onClick={() => setSelectedEntryIds([])}
+              disabled={selectedEntryIds.length === 0}
+            >
+              Clear selection
+            </button>
+            <select
+              className="ledger-select"
+              style={{ width: "auto", minWidth: 180 }}
+              value={bulkAssignAccountId}
+              onChange={(e) => setBulkAssignAccountId(e.target.value)}
+            >
+              <option value="">No account</option>
+              {accounts.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              className="ledger-btn"
+              style={{ padding: "8px 14px" }}
+              onClick={() => bulkAssignAccount(bulkAssignAccountId)}
+              disabled={selectedEntryIds.length === 0}
+            >
+              Assign account
+            </button>
+          </div>
+        )}
 
         {!globalSearchActive && (periodDrillDay || filterCat !== "all") && (
           <div
@@ -3605,6 +4202,35 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                   </span>
                 )}
               </div>
+
+              {accounts.length > 0 && (
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 12,
+                    flexWrap: "wrap",
+                    marginBottom: 12,
+                  }}
+                >
+                  <label style={{ fontSize: 12, color: "#74836A", fontWeight: 600 }}>
+                    Assign to account:
+                  </label>
+                  <select
+                    className="ledger-select"
+                    style={{ width: "auto", minWidth: 180 }}
+                    value={importAccountId}
+                    onChange={(e) => setImportAccountId(e.target.value)}
+                  >
+                    <option value="">No account</option>
+                    {accounts.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               {importPreview.source === "statement" && (
                 <div
@@ -4138,6 +4764,56 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
           </div>
         )}
 
+        {!globalSearchActive && savingTips.length > 0 && (
+          <CollapsiblePanel
+            title="Saving tips"
+            meta={`${savingTips.length} suggestion${savingTips.length === 1 ? "" : "s"} · ${periodLabel}`}
+            open={showSavingTips}
+            onToggle={() => setShowSavingTips((v) => !v)}
+          >
+            <SavingTipsPanel
+              tips={savingTips}
+              periodLabel={periodLabel}
+              onCategoryClick={(categoryId) => drillToCategory(categoryId, "expense")}
+            />
+          </CollapsiblePanel>
+        )}
+
+        {!globalSearchActive && (
+          <CollapsiblePanel
+            title="Savings goals"
+            meta={
+              savingsGoals.length > 0
+                ? `${savingsGoals.length} goal${savingsGoals.length === 1 ? "" : "s"}`
+                : "Track progress toward targets"
+            }
+            open={showSavingsGoals}
+            onToggle={() => setShowSavingsGoals((v) => !v)}
+          >
+            <SavingsGoalsPanel
+              goals={savingsGoals}
+              onAdd={addSavingsGoal}
+              onUpdate={updateSavingsGoal}
+              onRemove={removeSavingsGoal}
+            />
+          </CollapsiblePanel>
+        )}
+
+        {!globalSearchActive && (
+          <CollapsiblePanel
+            title="Accounts"
+            meta={
+              accounts.length > 0
+                ? `${accounts.length} account${accounts.length === 1 ? "" : "s"}`
+                : "Bank, card, cash, or wallet"
+            }
+            open={showAccounts}
+            onToggle={() => setShowAccounts((v) => !v)}
+          >
+            <AccountsPanel accounts={accounts} onAdd={addAccount} onRemove={removeAccount} />
+          </CollapsiblePanel>
+        )}
+
         {cumulativeExpenseChart &&
           (filterType === "all" || filterType === "expense") && (
             <CollapsiblePanel
@@ -4442,6 +5118,43 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
               open={showIncomeDetails}
               onToggle={() => setShowIncomeDetails((v) => !v)}
             >
+              {incomeTotals.length > 0 && !globalSearchActive && (
+                <div style={{ marginBottom: 16 }}>
+                  <div
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 600,
+                      letterSpacing: "0.1em",
+                      textTransform: "uppercase",
+                      color: "#74836A",
+                      marginBottom: 10,
+                    }}
+                  >
+                    Income by category
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    {incomeTotals.map((c) => (
+                      <DrillBar
+                        key={c.id}
+                        id={c.id}
+                        label={c.label}
+                        total={c.total}
+                        maxTotal={maxIncomeTotal}
+                        color={c.color}
+                        active={filterCat === c.id && filterType === "income"}
+                        onClick={() => drillToCategory(c.id, "income")}
+                        labelWidth={118}
+                        tooltip={{
+                          title: c.label,
+                          total: c.total,
+                          categories: [],
+                        }}
+                        fmtMoney={fmtMoney}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
               {renderEntryRows(incomeEntries)}
             </CollapsiblePanel>
             </>
@@ -4690,6 +5403,14 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
             Your last change couldn't be saved. Check your connection and try
             again.
           </div>
+        )}
+
+        {periodReport && (
+          <PeriodReportModal
+            report={periodReport}
+            onClose={() => setPeriodReport(null)}
+            onPrint={printPeriodReport}
+          />
         )}
       </div>
     </div>

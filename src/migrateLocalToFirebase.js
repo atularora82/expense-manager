@@ -9,6 +9,8 @@ const LEDGER_KEYS = [
   "ledger-category-rules",
   "ledger-statement-profiles",
   "ledger-backup-schedule",
+  "ledger-accounts",
+  "ledger-savings-goals",
 ];
 
 export async function migrateLocalToFirebase(uid) {

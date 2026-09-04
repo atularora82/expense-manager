@@ -46,28 +46,56 @@ export function getCachedGoogleAccessToken() {
   return token;
 }
 
+export class DriveAuthRequiredError extends Error {
+  constructor(
+    message = "Google Drive permission required. Use Back up to Drive to authorize."
+  ) {
+    super(message);
+    this.name = "DriveAuthRequiredError";
+    this.code = "drive/auth-required";
+  }
+}
+
+function formatAuthError(err) {
+  if (err?.code === "auth/popup-blocked") {
+    return "Popup blocked. Allow popups for this site, then try Back up to Drive again.";
+  }
+  if (err?.code === "auth/popup-closed-by-user") {
+    return "Google sign-in was cancelled.";
+  }
+  return err?.message || "Google Drive authorization failed.";
+}
+
 export async function getGoogleDriveAccessToken(auth, googleProvider, options = {}) {
-  const { forceRefresh = false } = options;
+  const { forceRefresh = false, interactive = true } = options;
   if (!forceRefresh) {
     const cached = getCachedGoogleAccessToken();
     if (cached) return cached;
+  }
+
+  if (!interactive) {
+    throw new DriveAuthRequiredError();
   }
 
   if (!auth?.currentUser) {
     throw new Error("Sign in with Google to use Drive backup.");
   }
 
-  googleProvider.addScope(DRIVE_SCOPE);
-  const result = await signInWithPopup(auth, googleProvider);
-  const credential = GoogleAuthProvider.credentialFromResult(result);
-  const accessToken = credential?.accessToken;
+  try {
+    googleProvider.addScope(DRIVE_SCOPE);
+    const result = await signInWithPopup(auth, googleProvider);
+    const credential = GoogleAuthProvider.credentialFromResult(result);
+    const accessToken = credential?.accessToken;
 
-  if (!accessToken) {
-    throw new Error("Google Drive permission was not granted.");
+    if (!accessToken) {
+      throw new Error("Google Drive permission was not granted.");
+    }
+
+    cacheGoogleAccessToken(accessToken);
+    return accessToken;
+  } catch (err) {
+    throw new Error(formatAuthError(err));
   }
-
-  cacheGoogleAccessToken(accessToken);
-  return accessToken;
 }
 
 async function findFolder(accessToken, folderName) {
@@ -182,9 +210,11 @@ export async function runGoogleDriveBackup({
   backup,
   schedule,
   forceAuth = false,
+  interactive = true,
 }) {
   const accessToken = await getGoogleDriveAccessToken(auth, googleProvider, {
     forceRefresh: forceAuth,
+    interactive,
   });
   const folderId = await ensureBackupFolder(accessToken, schedule.driveFolderId);
   const uploaded = await uploadBackupToDrive(accessToken, folderId, backup);
