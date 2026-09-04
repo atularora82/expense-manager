@@ -45,3 +45,44 @@ export function removeCategoryRule(rules, description) {
   delete next[key];
   return next;
 }
+
+export function clearCategoryRules() {
+  return {};
+}
+
+export function entryMatchesRule(entry, pattern, rule) {
+  if (entry.type !== rule.type) return false;
+  const key = normalizeMerchant(entry.description);
+  if (!key) return false;
+  if (key === pattern) return true;
+  if (pattern.length >= 3 && key.includes(pattern)) return true;
+  if (key.length >= 3 && pattern.includes(key)) return true;
+  return false;
+}
+
+export function pruneUnusedCategoryRules(rules, entries) {
+  const next = {};
+  for (const [pattern, rule] of Object.entries(rules)) {
+    const used = entries.some((entry) => entryMatchesRule(entry, pattern, rule));
+    if (used) next[pattern] = rule;
+  }
+  return next;
+}
+
+export function filterCategoryRuleEntries(rules, query, catInfoFor) {
+  const q = normalizeMerchant(query);
+  const list = Object.entries(rules).map(([pattern, rule]) => ({
+    pattern,
+    ...rule,
+    label: catInfoFor?.(rule.type, rule.category)?.label ?? rule.category,
+  }));
+  if (!q) return list.sort((a, b) => a.pattern.localeCompare(b.pattern));
+  return list
+    .filter(
+      (rule) =>
+        rule.pattern.includes(q) ||
+        rule.label.toLowerCase().includes(q) ||
+        rule.type.includes(q)
+    )
+    .sort((a, b) => a.pattern.localeCompare(b.pattern));
+}

@@ -27,7 +27,7 @@ const EXPENSE_KEYWORDS = {
   food: ["food", "restaurant", "lunch", "dinner", "breakfast", "coffee", "tea", "snack", "swiggy", "zomato", "dine", "cafe"],
   groceries: ["grocery", "groceries", "vegetable", "vegetables", "supermarket", "bigbasket", "kirana", "milk", "fruits"],
   transport: ["uber", "ola", "taxi", "auto", "rickshaw", "bus", "train ticket", "metro", "fuel", "petrol", "diesel", "cab", "toll", "parking", "insurance"],
-  housing: ["rent", "maintenance", "housing", "society"],
+  housing: ["rent", "maintenance", "housing", "society", "home loan", "homeloan", "housing loan", "hl emi", "mortgage", "property loan", "lap emi"],
   utilities: ["electricity", "electric bill", "water bill", "wifi", "internet", "recharge", "mobile bill", "gas cylinder", "broadband", "dth", "airtel"],
   entertainment: ["movie", "netflix", "entertainment", "concert", "game", "cinema", "bookmyshow", "subscription", "spotify", "prime video"],
   health: ["medicine", "doctor", "hospital", "pharmacy", "gym", "clinic", "medical", "health", "apollo"],

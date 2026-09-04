@@ -18,6 +18,9 @@ import {
   lookupCategoryRule,
   saveCategoryRule,
   removeCategoryRule,
+  clearCategoryRules,
+  pruneUnusedCategoryRules,
+  filterCategoryRuleEntries,
 } from "./categoryRules.js";
 import { processRecurringItems } from "./recurring.js";
 import { createBackup, downloadBackup, parseBackupFile } from "./backup.js";
@@ -80,6 +83,17 @@ import { buildPeriodReport } from "./periodReport.js";
 import PeriodReportModal from "./PeriodReportModal.jsx";
 import SavingsGoalsPanel from "./SavingsGoalsPanel.jsx";
 import AccountsPanel from "./AccountsPanel.jsx";
+import {
+  computeBudgetAllocation,
+  sumMonthIncome,
+  averageMonthlyIncome,
+  rebalanceZeroSpendBudgets,
+} from "./budgetAllocation.js";
+import {
+  BUDGET_SETTINGS_KEY,
+  detectHomeLoanEmi,
+  normalizeBudgetSettings,
+} from "./homeLoanEmi.js";
 
 const CATEGORIES = [
   { id: "food", label: "Food & Dining", color: "#A93B3B" },
@@ -272,7 +286,7 @@ const EXPENSE_KEYWORDS = {
   food: ["food", "restaurant", "lunch", "dinner", "breakfast", "coffee", "tea", "snack", "swiggy", "zomato", "dine", "cafe"],
   groceries: ["grocery", "groceries", "vegetable", "vegetables", "supermarket", "bigbasket", "kirana", "milk", "fruits"],
   transport: ["uber", "ola", "taxi", "auto", "rickshaw", "bus", "train ticket", "metro", "fuel", "petrol", "diesel", "cab", "toll", "parking"],
-  housing: ["rent", "maintenance", "housing", "society"],
+  housing: ["rent", "maintenance", "housing", "society", "home loan", "homeloan", "housing loan", "hl emi", "mortgage", "property loan", "lap emi"],
   utilities: ["electricity", "electric bill", "water bill", "wifi", "internet", "recharge", "mobile bill", "gas cylinder", "broadband", "dth"],
   entertainment: ["movie", "netflix", "entertainment", "concert", "game", "cinema", "bookmyshow", "subscription", "spotify", "prime video"],
   health: ["medicine", "doctor", "hospital", "pharmacy", "gym", "clinic", "medical", "health"],
@@ -342,6 +356,16 @@ function resolveFormCategory(type, categoryId) {
   const list = catsForType(type);
   return list.some((c) => c.id === categoryId) ? categoryId : list[0].id;
 }
+
+const budgetFieldLabel = {
+  fontSize: 11,
+  fontWeight: 600,
+  color: "#74836A",
+  textTransform: "uppercase",
+  letterSpacing: "0.06em",
+  display: "block",
+  marginBottom: 5,
+};
 
 function CollapsiblePanel({ title, meta, open, onToggle, hideToggle = false, children }) {
   return (
@@ -481,6 +505,12 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
   const [bulkSelectMode, setBulkSelectMode] = useState(false);
   const [selectedEntryIds, setSelectedEntryIds] = useState([]);
   const [bulkAssignAccountId, setBulkAssignAccountId] = useState("");
+  const [showCategoryRules, setShowCategoryRules] = useState(false);
+  const [categoryRuleSearch, setCategoryRuleSearch] = useState("");
+  const [budgetCustomIncome, setBudgetCustomIncome] = useState("");
+  const [budgetEmiInput, setBudgetEmiInput] = useState("");
+  const [budgetSettings, setBudgetSettings] = useState(() => normalizeBudgetSettings());
+  const [budgetSettingsLoaded, setBudgetSettingsLoaded] = useState(false);
   const importInputRef = useRef(null);
   const statementInputRef = useRef(null);
   const backupInputRef = useRef(null);
@@ -522,6 +552,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
         scheduleResult,
         accountsResult,
         goalsResult,
+        budgetSettingsResult,
       ] = await Promise.all([
         readKey("ledger-entries"),
         readKey("ledger-budgets"),
@@ -531,6 +562,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
         readKey(BACKUP_SCHEDULE_KEY),
         readKey("ledger-accounts"),
         readKey("ledger-savings-goals"),
+        readKey(BUDGET_SETTINGS_KEY),
       ]);
 
       if (cancelled) return;
@@ -547,6 +579,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
         setBackupScheduleLoaded(true);
         setAccountsLoaded(true);
         setSavingsGoalsLoaded(true);
+        setBudgetSettingsLoaded(true);
         return;
       }
 
@@ -582,6 +615,9 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
       if (goalsResult.ok && goalsResult.value) {
         setSavingsGoals(normalizeSavingsGoals(parseStoredJson(goalsResult.value, [])));
       }
+      if (budgetSettingsResult.ok && budgetSettingsResult.value) {
+        setBudgetSettings(normalizeBudgetSettings(parseStoredJson(budgetSettingsResult.value, {})));
+      }
 
       setLoaded(true);
       setBudgetsLoaded(true);
@@ -591,6 +627,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
       setBackupScheduleLoaded(true);
       setAccountsLoaded(true);
       setSavingsGoalsLoaded(true);
+      setBudgetSettingsLoaded(true);
       setStorageHydrated(true);
     })();
 
@@ -633,6 +670,17 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
       }
     })();
   }, [budgets, budgetsLoaded]);
+
+  useEffect(() => {
+    if (!storageHydrated || !budgetSettingsLoaded) return;
+    (async () => {
+      try {
+        await window.storage.set(BUDGET_SETTINGS_KEY, JSON.stringify(budgetSettings));
+      } catch (e) {
+        // ignore
+      }
+    })();
+  }, [budgetSettings, budgetSettingsLoaded, storageHydrated]);
 
   useEffect(() => {
     if (!storageHydrated || !accountsLoaded) return;
@@ -722,12 +770,6 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
     }
   }, [loaded, recurringLoaded, recurring.length]);
 
-  useEffect(() => {
-    if (!loaded || !rulesLoaded) return;
-    if (Object.keys(categoryRules).length > 0 || entries.length === 0) return;
-    learnCategoryRulesFromEntries(entries);
-  }, [loaded, rulesLoaded, entries.length]);
-
   function learnCategoryRulesFromEntries(list) {
     const next = list.reduce(
       (rules, en) =>
@@ -788,14 +830,17 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
       return;
     }
     const savedCategory = resolveFormCategory(formType, categoryRef.current);
-    const nextRules = saveCategoryRule(
-      categoryRulesRef.current,
-      trimmedDesc,
-      formType,
-      savedCategory
-    );
-    categoryRulesRef.current = nextRules;
-    setCategoryRules(nextRules);
+    let nextRules = categoryRulesRef.current;
+    if (categoryLocked) {
+      nextRules = saveCategoryRule(
+        categoryRulesRef.current,
+        trimmedDesc,
+        formType,
+        savedCategory
+      );
+      categoryRulesRef.current = nextRules;
+      setCategoryRules(nextRules);
+    }
 
     if (editingId) {
       setEntries((prev) =>
@@ -1659,14 +1704,30 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
   );
 
   const categoryRuleList = useMemo(
-    () =>
-      Object.entries(categoryRules).map(([pattern, rule]) => ({
-        pattern,
-        ...rule,
-        label: catInfoFor(rule.type, rule.category)?.label ?? rule.category,
-      })),
-    [categoryRules]
+    () => filterCategoryRuleEntries(categoryRules, categoryRuleSearch, catInfoFor),
+    [categoryRules, categoryRuleSearch]
   );
+
+  const categoryRuleCount = Object.keys(categoryRules).length;
+
+  function pruneCategoryRules() {
+    const pruned = pruneUnusedCategoryRules(categoryRules, entries);
+    const removed = categoryRuleCount - Object.keys(pruned).length;
+    categoryRulesRef.current = pruned;
+    setCategoryRules(pruned);
+    setImportNote(
+      removed > 0
+        ? `Removed ${removed} unused categor${removed === 1 ? "y" : "ies"} rule${removed === 1 ? "" : "s"}.`
+        : "No unused rules to remove."
+    );
+  }
+
+  function clearAllCategoryRules() {
+    categoryRulesRef.current = {};
+    setCategoryRules({});
+    setCategoryRuleSearch("");
+    setImportNote("All category rules cleared.");
+  }
 
   function updateBudgetDraft(id, value) {
     setBudgetDrafts((prev) => ({ ...prev, [id]: value }));
@@ -1689,6 +1750,102 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
   function budgetValueFor(id) {
     if (budgetDrafts[id] !== undefined) return budgetDrafts[id];
     return budgets[id] ? String(budgets[id]) : "";
+  }
+
+  const monthIncomeForBudget = useMemo(
+    () => sumMonthIncome(entries, month),
+    [entries, month]
+  );
+
+  const avgIncomeForBudget = useMemo(
+    () => averageMonthlyIncome(entries, month, 3),
+    [entries, month]
+  );
+
+  const detectedHomeLoanEmi = useMemo(
+    () => detectHomeLoanEmi(recurring, entries, { month }),
+    [recurring, entries, month]
+  );
+
+  const suggestedBudgetIncome = monthIncomeForBudget || avgIncomeForBudget;
+
+  const spendingByCategory = useMemo(() => {
+    const map = {};
+    for (const c of CATEGORIES) {
+      map[c.id] = (catTotals.find((t) => t.id === c.id) || {}).total || 0;
+    }
+    return map;
+  }, [catTotals]);
+
+  const zeroSpendRebalancePreview = useMemo(
+    () =>
+      rebalanceZeroSpendBudgets(
+        budgets,
+        spendingByCategory,
+        CATEGORIES.map((c) => c.id)
+      ),
+    [budgets, spendingByCategory]
+  );
+
+  function setupMonthlyBudgets() {
+    const customIncome = parseFloat(budgetCustomIncome);
+    const income =
+      Number.isFinite(customIncome) && customIncome > 0
+        ? customIncome
+        : suggestedBudgetIncome;
+
+    if (!income || income <= 0) {
+      setImportNote("Add income entries or enter your monthly income above.");
+      return;
+    }
+
+    const customEmi = parseFloat(budgetEmiInput);
+    const emi =
+      Number.isFinite(customEmi) && customEmi > 0
+        ? customEmi
+        : budgetSettings.housingEmiAmount || detectedHomeLoanEmi?.amount || null;
+
+    const result = computeBudgetAllocation({
+      monthlyIncome: income,
+      modelId: "50-30-20",
+      categoryIds: CATEGORIES.map((c) => c.id),
+      housingEmiAmount: emi,
+    });
+
+    setBudgets(result.budgets);
+    setBudgetDrafts({});
+    if (emi) {
+      setBudgetSettings({ housingEmiAmount: emi });
+      if (budgetEmiInput === "") setBudgetEmiInput(String(emi));
+    }
+    setImportNote(
+      `Budgets set from ${fmtMoney(income)} income` +
+        (emi ? ` · Housing = EMI ${fmtMoney(emi)}` : "") +
+        "."
+    );
+  }
+
+  function moveUnusedBudgets() {
+    const result = rebalanceZeroSpendBudgets(
+      budgets,
+      spendingByCategory,
+      CATEGORIES.map((c) => c.id)
+    );
+    if (!result.applied) {
+      if (result.reason === "no_over_budget") {
+        setImportNote("No over-budget categories to move unused limits into.");
+      }
+      return;
+    }
+    setBudgets(result.budgets);
+    setBudgetDrafts({});
+    const from = result.donors
+      .map((d) => `${catMap[d.id]?.label || d.id} (${fmtMoney(d.amount)})`)
+      .join(", ");
+    const to = result.recipients
+      .map((r) => `${catMap[r.id]?.label || r.id} (+${fmtMoney(r.amount)})`)
+      .join(", ");
+    setImportNote(`Moved ${fmtMoney(result.pool)} from unused limits: ${from} → ${to}.`);
   }
 
   async function persistStatementProfile(columns, mapping, dateFormat = "DMY") {
@@ -1813,7 +1970,10 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
   function patchImportPreviewRow(previewId, patch) {
     setImportPreview((prev) => {
       if (!prev) return prev;
-      let rows = updateImportPreviewRow(prev.rows, previewId, patch);
+      let rows = updateImportPreviewRow(prev.rows, previewId, {
+        ...patch,
+        ...(patch.category !== undefined ? { categoryOverridden: true } : {}),
+      });
       if (patch.type) {
         rows = rows.map((row) => {
           if (row.previewId !== previewId) return row;
@@ -1930,7 +2090,21 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
       setEntries((prev) =>
         mergeImportedEntries(prev, imported, { allowDateAmountDuplicates })
       );
-      learnCategoryRulesFromEntries(addedEntries);
+      const rowsToLearn = importPreview.rows.filter(
+        (row) =>
+          row.included &&
+          row.categoryOverridden &&
+          !getRowValidationError(row)
+      );
+      if (rowsToLearn.length > 0) {
+        learnCategoryRulesFromEntries(
+          rowsToLearn.map((row) => ({
+            description: row.description,
+            type: row.type,
+            category: row.category,
+          }))
+        );
+      }
     }
 
     if (importPreview.errors.length > 0) {
@@ -5205,81 +5379,153 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
             </div>
           )}
 
-        {/* Category rules */}
-        {categoryRuleList.length > 0 && (
-          <div style={{ marginBottom: 28 }}>
-            <div
-              style={{
-                fontSize: 11,
-                fontWeight: 600,
-                letterSpacing: "0.1em",
-                textTransform: "uppercase",
-                color: "#74836A",
-                marginBottom: 10,
-              }}
-            >
-              Saved category rules
-            </div>
-            <div
-              style={{
-                border: "1px solid #D8CDB4",
-                borderRadius: 8,
-                background: "#FFFDF8",
-                overflow: "hidden",
-              }}
-            >
-              {categoryRuleList.map((rule, i) => (
-                <div
-                  key={rule.pattern}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 12,
-                    padding: "10px 16px",
-                    borderTop: i === 0 ? "none" : "1px dashed #E4DCC5",
-                    fontSize: 13,
-                  }}
-                >
-                  <div style={{ flex: 1, color: "#1F2A22" }}>{rule.pattern}</div>
-                  <div style={{ color: "#74836A", fontSize: 12 }}>
-                    {rule.type} &rarr; {rule.label}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setCategoryRules((prev) => removeCategoryRule(prev, rule.pattern))
-                    }
-                    style={{
-                      background: "none",
-                      border: "none",
-                      cursor: "pointer",
-                      color: "#A93B3B",
-                      fontSize: 12,
-                    }}
-                  >
-                    Remove
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
         {/* Monthly budgets */}
         {periodMode === "month" && !globalSearchActive ? (
           <div style={{ marginBottom: 28 }}>
             <div
               style={{
-                fontSize: 11,
-                fontWeight: 600,
-                letterSpacing: "0.1em",
-                textTransform: "uppercase",
-                color: "#74836A",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "flex-end",
+                gap: 12,
+                flexWrap: "wrap",
                 marginBottom: 10,
               }}
             >
-              Monthly budgets &mdash; {monthLabel(month)}
+              <div
+                style={{
+                  fontSize: 11,
+                  fontWeight: 600,
+                  letterSpacing: "0.1em",
+                  textTransform: "uppercase",
+                  color: "#74836A",
+                }}
+              >
+                Monthly budgets &mdash; {monthLabel(month)}
+              </div>
             </div>
+
+            <div
+              style={{
+                border: "1px solid #D8CDB4",
+                borderRadius: 8,
+                background: "#F6F1E6",
+                padding: "14px 16px",
+                marginBottom: 12,
+              }}
+            >
+              <div style={{ fontSize: 12.5, color: "#74836A", marginBottom: 12, lineHeight: 1.45 }}>
+                Set all limits at once using the <strong>50/30/20</strong> rule.
+                {suggestedBudgetIncome > 0 ? (
+                  <>
+                    {" "}
+                    Using income {fmtMoney(suggestedBudgetIncome)}
+                    {monthIncomeForBudget > 0 ? " from this month" : " (3-month avg)"}.
+                  </>
+                ) : (
+                  " Enter your monthly income below."
+                )}
+                {detectedHomeLoanEmi && (
+                  <>
+                    {" "}
+                    Home loan EMI detected: {fmtMoney(detectedHomeLoanEmi.amount)}.
+                  </>
+                )}
+              </div>
+              <div
+                style={{
+                  display: "flex",
+                  gap: 10,
+                  flexWrap: "wrap",
+                  alignItems: "flex-end",
+                }}
+              >
+                <div>
+                  <label style={budgetFieldLabel}>Monthly income</label>
+                  <input
+                    className="ledger-input"
+                    type="number"
+                    min="0"
+                    step="1000"
+                    placeholder={
+                      suggestedBudgetIncome > 0 ? String(suggestedBudgetIncome) : "e.g. 80000"
+                    }
+                    value={budgetCustomIncome}
+                    onChange={(e) => setBudgetCustomIncome(e.target.value)}
+                    style={{ width: 140 }}
+                  />
+                </div>
+                <div>
+                  <label style={budgetFieldLabel}>Home loan EMI</label>
+                  <input
+                    className="ledger-input"
+                    type="number"
+                    min="0"
+                    step="100"
+                    placeholder={
+                      budgetSettings.housingEmiAmount
+                        ? String(budgetSettings.housingEmiAmount)
+                        : detectedHomeLoanEmi
+                        ? String(detectedHomeLoanEmi.amount)
+                        : "Optional"
+                    }
+                    value={budgetEmiInput}
+                    onChange={(e) => setBudgetEmiInput(e.target.value)}
+                    style={{ width: 140 }}
+                  />
+                </div>
+                <button
+                  type="button"
+                  className="ledger-btn"
+                  style={{ padding: "10px 16px" }}
+                  onClick={setupMonthlyBudgets}
+                >
+                  Set budgets
+                </button>
+              </div>
+            </div>
+
+            {zeroSpendRebalancePreview.pool > 0 && (
+              <div
+                style={{
+                  border: "1px solid #D8CDB4",
+                  borderRadius: 8,
+                  background: "#FFFDF8",
+                  padding: "12px 16px",
+                  marginBottom: 12,
+                  display: "flex",
+                  gap: 12,
+                  flexWrap: "wrap",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                }}
+              >
+                <div style={{ fontSize: 12.5, color: "#4A5A4E", lineHeight: 1.45, flex: 1 }}>
+                  {zeroSpendRebalancePreview.donors
+                    .map((d) => `${catMap[d.id]?.label || d.id} (${fmtMoney(d.amount)})`)
+                    .join(", ")}{" "}
+                  {zeroSpendRebalancePreview.donors.length === 1 ? "has" : "have"} no spending
+                  this month — move {fmtMoney(zeroSpendRebalancePreview.pool)} to over-budget
+                  categories?
+                </div>
+                <button
+                  type="button"
+                  className="ledger-btn ledger-btn-ghost"
+                  style={{
+                    textTransform: "none",
+                    letterSpacing: "normal",
+                    fontWeight: 500,
+                    padding: "8px 14px",
+                    whiteSpace: "nowrap",
+                  }}
+                  onClick={moveUnusedBudgets}
+                  disabled={!zeroSpendRebalancePreview.applied}
+                >
+                  Move unused limits
+                </button>
+              </div>
+            )}
+
             <div
               style={{
                 border: "1px solid #D8CDB4",
@@ -5315,6 +5561,11 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                   >
                     <div style={{ width: 130, fontSize: 12.5, color: "#1F2A22" }}>
                       {c.label}
+                      {hasBudget && spent === 0 && (
+                        <div style={{ fontSize: 10, color: "#8B5E34", marginTop: 2 }}>
+                          Unused {fmtMoney(budget)}
+                        </div>
+                      )}
                     </div>
                     <div
                       style={{
@@ -5381,6 +5632,134 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
             {periodMode === "year" && " Year view shows spending totals only."}
           </div>
         ) : null}
+
+        {/* Category rules */}
+        {categoryRuleCount > 0 && (
+          <CollapsiblePanel
+            title="Category rules"
+            meta={`${categoryRuleCount} rule${categoryRuleCount === 1 ? "" : "s"} · auto-categorize imports`}
+            open={showCategoryRules}
+            onToggle={() => setShowCategoryRules((v) => !v)}
+          >
+            <div style={{ fontSize: 12.5, color: "#74836A", marginBottom: 12, lineHeight: 1.45 }}>
+              Rules are saved when you manually pick a category. They help auto-categorize
+              future imports with similar descriptions.
+            </div>
+            <div
+              style={{
+                display: "flex",
+                gap: 8,
+                marginBottom: 12,
+                flexWrap: "wrap",
+                alignItems: "center",
+              }}
+            >
+              <input
+                className="ledger-input"
+                type="search"
+                placeholder="Search rules…"
+                value={categoryRuleSearch}
+                onChange={(e) => setCategoryRuleSearch(e.target.value)}
+                style={{ flex: 1, minWidth: 160, maxWidth: 280 }}
+              />
+              <button
+                type="button"
+                className="ledger-btn ledger-btn-ghost"
+                style={{
+                  textTransform: "none",
+                  letterSpacing: "normal",
+                  fontWeight: 500,
+                  padding: "7px 12px",
+                }}
+                onClick={pruneCategoryRules}
+              >
+                Remove unused
+              </button>
+              <button
+                type="button"
+                className="ledger-btn ledger-btn-ghost"
+                style={{
+                  textTransform: "none",
+                  letterSpacing: "normal",
+                  fontWeight: 500,
+                  padding: "7px 12px",
+                  color: "#A93B3B",
+                }}
+                onClick={clearAllCategoryRules}
+              >
+                Clear all
+              </button>
+            </div>
+            {categoryRuleList.length === 0 ? (
+              <div style={{ fontSize: 13, color: "#74836A" }}>
+                No rules match your search.
+              </div>
+            ) : (
+              <div
+                style={{
+                  border: "1px solid #D8CDB4",
+                  borderRadius: 8,
+                  background: "#FFFDF8",
+                  overflow: "hidden",
+                  maxHeight: 280,
+                  overflowY: "auto",
+                }}
+              >
+                {categoryRuleList.map((rule, i) => (
+                  <div
+                    key={rule.pattern}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 12,
+                      padding: "10px 16px",
+                      borderTop: i === 0 ? "none" : "1px dashed #E4DCC5",
+                      fontSize: 13,
+                    }}
+                  >
+                    <div
+                      style={{
+                        flex: 1,
+                        color: "#1F2A22",
+                        minWidth: 0,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                      title={rule.pattern}
+                    >
+                      {rule.pattern}
+                    </div>
+                    <div style={{ color: "#74836A", fontSize: 12, flexShrink: 0 }}>
+                      {rule.type} &rarr; {rule.label}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setCategoryRules((prev) => removeCategoryRule(prev, rule.pattern))
+                      }
+                      style={{
+                        background: "none",
+                        border: "none",
+                        cursor: "pointer",
+                        color: "#A93B3B",
+                        fontSize: 12,
+                        flexShrink: 0,
+                      }}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {categoryRuleSearch && categoryRuleList.length < categoryRuleCount && (
+              <div style={{ fontSize: 12, color: "#74836A", marginTop: 8 }}>
+                Showing {categoryRuleList.length} of {categoryRuleCount} rules
+              </div>
+            )}
+          </CollapsiblePanel>
+        )}
 
         {loadError && (
           <div
