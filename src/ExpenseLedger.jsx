@@ -83,6 +83,12 @@ import { buildPeriodReport } from "./periodReport.js";
 import PeriodReportModal from "./PeriodReportModal.jsx";
 import SavingsGoalsPanel from "./SavingsGoalsPanel.jsx";
 import AccountsPanel from "./AccountsPanel.jsx";
+import MonthlyAllocationPanel from "./MonthlyAllocationPanel.jsx";
+import {
+  buildMonthlyAllocationOverview,
+  groupEntriesForAllocationDrill,
+  categoryTotalsInBucket,
+} from "./monthlyAllocationOverview.js";
 import {
   computeBudgetAllocation,
   sumMonthIncome,
@@ -1786,6 +1792,38 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
       ),
     [budgets, spendingByCategory]
   );
+
+  const monthlyAllocationOverview = useMemo(() => {
+    if (periodMode !== "month" || globalSearchActive) return null;
+    const income =
+      periodIncomeTotal > 0 ? periodIncomeTotal : suggestedBudgetIncome;
+    return buildMonthlyAllocationOverview({
+      income,
+      spendingByCategory,
+      investmentTotal: periodInvestmentTotal,
+      incomeIsEstimated: periodIncomeTotal <= 0 && suggestedBudgetIncome > 0,
+    });
+  }, [
+    periodMode,
+    globalSearchActive,
+    periodIncomeTotal,
+    suggestedBudgetIncome,
+    spendingByCategory,
+    periodInvestmentTotal,
+  ]);
+
+  const allocationDrillData = useMemo(() => {
+    if (periodMode !== "month" || globalSearchActive) return null;
+    const groups = groupEntriesForAllocationDrill(periodEntries);
+    return {
+      drillGroups: groups,
+      categoryTotalsByBucket: {
+        needs: categoryTotalsInBucket(groups.needs, catMap),
+        wants: categoryTotalsInBucket(groups.wants, catMap),
+        investment: categoryTotalsInBucket(groups.investment, investmentCatMap),
+      },
+    };
+  }, [periodMode, globalSearchActive, periodEntries]);
 
   function setupMonthlyBudgets() {
     const customIncome = parseFloat(budgetCustomIncome);
@@ -5382,6 +5420,16 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
         {/* Monthly budgets */}
         {periodMode === "month" && !globalSearchActive ? (
           <div style={{ marginBottom: 28 }}>
+            <MonthlyAllocationPanel
+              overview={monthlyAllocationOverview}
+              monthLabel={monthLabel(month)}
+              drillGroups={allocationDrillData?.drillGroups}
+              categoryTotalsByBucket={allocationDrillData?.categoryTotalsByBucket}
+              fmtDateFull={fmtDateFull}
+              catInfoFor={catInfoFor}
+              onCategoryClick={drillToCategory}
+            />
+
             <div
               style={{
                 display: "flex",
