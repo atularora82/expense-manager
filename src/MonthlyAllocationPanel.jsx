@@ -1,5 +1,147 @@
 import React, { useState } from "react";
 
+import { ALLOCATION_MODELS } from "./budgetAllocation.js";
+import { BUDGET_METHODS } from "./budgetSettings.js";
+
+function BudgetSetupForm({
+  suggestedIncome,
+  monthIncome,
+  detectedEmi,
+  savedEmi,
+  customIncome,
+  onCustomIncomeChange,
+  emiInput,
+  onEmiInputChange,
+  onSetBudgets,
+  fmtMoney,
+  budgetMethod,
+  onBudgetMethodChange,
+  allocationModelId,
+  onAllocationModelChange,
+  compact = false,
+}) {
+  const fieldLabel = {
+    fontSize: 11,
+    fontWeight: 600,
+    color: "#74836A",
+    textTransform: "uppercase",
+    letterSpacing: "0.06em",
+    display: "block",
+    marginBottom: 5,
+  };
+
+  return (
+    <div
+      style={{
+        borderTop: compact ? "none" : "1px dashed #E4DCC5",
+        paddingTop: compact ? 0 : 12,
+      }}
+    >
+      {!compact && (
+        <div style={{ fontSize: 12.5, color: "#74836A", marginBottom: 12, lineHeight: 1.45 }}>
+          Auto-fill category limits from an income rule or your spending history. Customize
+          Needs/Wants per category on the <strong>Plan</strong> tab.
+          {suggestedIncome > 0 ? (
+            <>
+              {" "}
+              Income basis {fmtMoney(suggestedIncome)}
+              {monthIncome > 0 ? " (this month)" : " (3-month avg)"}.
+            </>
+          ) : (
+            " Enter monthly income below."
+          )}
+          {detectedEmi && (
+            <> EMI detected: {fmtMoney(detectedEmi.amount)}.</>
+          )}
+        </div>
+      )}
+      <div
+        style={{
+          display: "flex",
+          gap: 10,
+          flexWrap: "wrap",
+          alignItems: "flex-end",
+        }}
+      >
+        <div>
+          <label style={fieldLabel}>Build from</label>
+          <select
+            className="ledger-select"
+            style={{ minWidth: 140 }}
+            value={budgetMethod || "rule"}
+            onChange={(e) => onBudgetMethodChange(e.target.value)}
+          >
+            {BUDGET_METHODS.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        {budgetMethod !== "avg-spend" && (
+          <>
+            <div>
+              <label style={fieldLabel}>Income rule</label>
+              <select
+                className="ledger-select"
+                style={{ minWidth: 170 }}
+                value={allocationModelId || "50-30-20"}
+                onChange={(e) => onAllocationModelChange(e.target.value)}
+              >
+                {ALLOCATION_MODELS.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label style={fieldLabel}>Monthly income</label>
+              <input
+                className="ledger-input"
+                type="number"
+                min="0"
+                step="1000"
+                placeholder={suggestedIncome > 0 ? String(suggestedIncome) : "e.g. 80000"}
+                value={customIncome}
+                onChange={(e) => onCustomIncomeChange(e.target.value)}
+                style={{ width: 130 }}
+              />
+            </div>
+            <div>
+              <label style={fieldLabel}>Home loan EMI</label>
+              <input
+                className="ledger-input"
+                type="number"
+                min="0"
+                step="100"
+                placeholder={
+                  savedEmi
+                    ? String(savedEmi)
+                    : detectedEmi
+                    ? String(detectedEmi.amount)
+                    : "Optional"
+                }
+                value={emiInput}
+                onChange={(e) => onEmiInputChange(e.target.value)}
+                style={{ width: 120 }}
+              />
+            </div>
+          </>
+        )}
+        <button
+          type="button"
+          className="ledger-btn"
+          style={{ padding: "10px 16px" }}
+          onClick={onSetBudgets}
+        >
+          {budgetMethod === "avg-spend" ? "Set from spending" : "Apply income rule"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function fmtMoney(n) {
   return `₹${Math.round(n).toLocaleString("en-IN")}`;
 }
@@ -200,6 +342,7 @@ export default function MonthlyAllocationPanel({
   fmtDateFull,
   catInfoFor,
   onCategoryClick,
+  budgetSetup,
 }) {
   const [expandedBucket, setExpandedBucket] = useState(null);
 
@@ -235,9 +378,14 @@ export default function MonthlyAllocationPanel({
         }}
       >
         {!overview.hasIncome ? (
-          <div style={{ fontSize: 12.5, color: "#74836A", lineHeight: 1.45 }}>
-            {overview.suggestion}
-          </div>
+          <>
+            <div style={{ fontSize: 12.5, color: "#74836A", lineHeight: 1.45, marginBottom: 14 }}>
+              {overview.suggestion}
+            </div>
+            {budgetSetup && (
+              <BudgetSetupForm {...budgetSetup} monthLabel={monthLabel} compact />
+            )}
+          </>
         ) : (
           <>
             <div
@@ -350,11 +498,13 @@ export default function MonthlyAllocationPanel({
                 fontSize: 12.5,
                 color: "#4A5A4E",
                 lineHeight: 1.5,
+                marginBottom: budgetSetup ? 14 : 0,
               }}
             >
               <strong style={{ color: "#1F2A22" }}>Suggestion: </strong>
               {overview.suggestion}
             </div>
+            {budgetSetup && <BudgetSetupForm {...budgetSetup} monthLabel={monthLabel} />}
           </>
         )}
       </div>

@@ -26,14 +26,10 @@ export function looksLikeHomeLoanEmi(description) {
   return /\bemi\b/.test(text) && /(home|housing|mortgage|property|\bhl\b)/.test(text);
 }
 
+import { normalizeBudgetSettings as normalizeBudgetSettingsBase } from "./budgetSettings.js";
+
 export function normalizeBudgetSettings(raw) {
-  if (!raw || typeof raw !== "object") {
-    return { housingEmiAmount: null };
-  }
-  const amount = Number(raw.housingEmiAmount);
-  return {
-    housingEmiAmount: Number.isFinite(amount) && amount > 0 ? amount : null,
-  };
+  return normalizeBudgetSettingsBase(raw);
 }
 
 function monthsAgoYm(ym, count) {

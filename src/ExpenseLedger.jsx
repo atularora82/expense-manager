@@ -84,6 +84,9 @@ import PeriodReportModal from "./PeriodReportModal.jsx";
 import SavingsGoalsPanel from "./SavingsGoalsPanel.jsx";
 import AccountsPanel from "./AccountsPanel.jsx";
 import MonthlyAllocationPanel from "./MonthlyAllocationPanel.jsx";
+import MonthlyBudgetSection from "./MonthlyBudgetSection.jsx";
+import LedgerTabBar from "./LedgerTabBar.jsx";
+import LedgerPeriodBar from "./LedgerPeriodBar.jsx";
 import {
   buildMonthlyAllocationOverview,
   groupEntriesForAllocationDrill,
@@ -94,12 +97,17 @@ import {
   sumMonthIncome,
   averageMonthlyIncome,
   rebalanceZeroSpendBudgets,
+  averageCategorySpending,
 } from "./budgetAllocation.js";
 import {
   BUDGET_SETTINGS_KEY,
   detectHomeLoanEmi,
   normalizeBudgetSettings,
 } from "./homeLoanEmi.js";
+import {
+  resolveCategoryBuckets,
+  setCategoryBucketInSettings,
+} from "./budgetSettings.js";
 
 const CATEGORIES = [
   { id: "food", label: "Food & Dining", color: "#A93B3B" },
@@ -363,16 +371,6 @@ function resolveFormCategory(type, categoryId) {
   return list.some((c) => c.id === categoryId) ? categoryId : list[0].id;
 }
 
-const budgetFieldLabel = {
-  fontSize: 11,
-  fontWeight: 600,
-  color: "#74836A",
-  textTransform: "uppercase",
-  letterSpacing: "0.06em",
-  display: "block",
-  marginBottom: 5,
-};
-
 function CollapsiblePanel({ title, meta, open, onToggle, hideToggle = false, children }) {
   return (
     <div
@@ -495,13 +493,15 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
   const [driveBackupBusy, setDriveBackupBusy] = useState(false);
   const [showDriveBackup, setShowDriveBackup] = useState(false);
   const driveBackupRanRef = useRef(false);
+  const [activeTab, setActiveTab] = useState("overview");
   const [showRecurring, setShowRecurring] = useState(false);
-  const [showExpenseDetails, setShowExpenseDetails] = useState(true);
-  const [showCumulativeChart, setShowCumulativeChart] = useState(true);
-  const [showCumulativeIncomeChart, setShowCumulativeIncomeChart] = useState(true);
+  const [showTransactions, setShowTransactions] = useState(true);
+  const [showExpenseDetails, setShowExpenseDetails] = useState(false);
+  const [showCumulativeChart, setShowCumulativeChart] = useState(false);
+  const [showCumulativeIncomeChart, setShowCumulativeIncomeChart] = useState(false);
   const [showCumulativeInvestmentChart, setShowCumulativeInvestmentChart] =
-    useState(true);
-  const [showInvestmentDetails, setShowInvestmentDetails] = useState(true);
+    useState(false);
+  const [showInvestmentDetails, setShowInvestmentDetails] = useState(false);
   const [showIncomeDetails, setShowIncomeDetails] = useState(false);
   const [showSavingTips, setShowSavingTips] = useState(true);
   const [showAccounts, setShowAccounts] = useState(false);
@@ -1144,9 +1144,14 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
   }
 
   function drillToCategory(categoryId, type) {
+    setActiveTab("transactions");
     setFilterType(type);
     setFilterCat((prev) => (prev === categoryId ? "all" : categoryId));
   }
+
+  useEffect(() => {
+    if (globalSearchActive) setActiveTab("transactions");
+  }, [globalSearchActive]);
 
   function clearPeriodDrill() {
     setPeriodDrillDay(null);
@@ -1775,6 +1780,11 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
 
   const suggestedBudgetIncome = monthIncomeForBudget || avgIncomeForBudget;
 
+  const avgSpendingByCategory = useMemo(
+    () => averageCategorySpending(entries, month, CATEGORIES.map((c) => c.id), 3),
+    [entries, month]
+  );
+
   const spendingByCategory = useMemo(() => {
     const map = {};
     for (const c of CATEGORIES) {
@@ -1801,7 +1811,9 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
       income,
       spendingByCategory,
       investmentTotal: periodInvestmentTotal,
+      modelId: budgetSettings.allocationModelId,
       incomeIsEstimated: periodIncomeTotal <= 0 && suggestedBudgetIncome > 0,
+      budgetSettings,
     });
   }, [
     periodMode,
@@ -1810,11 +1822,12 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
     suggestedBudgetIncome,
     spendingByCategory,
     periodInvestmentTotal,
+    budgetSettings,
   ]);
 
   const allocationDrillData = useMemo(() => {
     if (periodMode !== "month" || globalSearchActive) return null;
-    const groups = groupEntriesForAllocationDrill(periodEntries);
+    const groups = groupEntriesForAllocationDrill(periodEntries, budgetSettings);
     return {
       drillGroups: groups,
       categoryTotalsByBucket: {
@@ -1823,9 +1836,44 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
         investment: categoryTotalsInBucket(groups.investment, investmentCatMap),
       },
     };
-  }, [periodMode, globalSearchActive, periodEntries]);
+  }, [periodMode, globalSearchActive, periodEntries, budgetSettings]);
+
+  function handleBudgetSettingsChange(partial) {
+    setBudgetSettings((prev) => normalizeBudgetSettings({ ...prev, ...partial }));
+  }
+
+  function handleCategoryBucketChange(categoryId, bucket) {
+    setBudgetSettings((prev) => setCategoryBucketInSettings(prev, categoryId, bucket));
+  }
+
+  function handleUseCategoryAvg(categoryId, amount) {
+    const num = Number(amount);
+    if (!Number.isFinite(num) || num <= 0) return;
+    setBudgets((prev) => ({ ...prev, [categoryId]: num }));
+    setBudgetDrafts((prev) => {
+      const next = { ...prev };
+      delete next[categoryId];
+      return next;
+    });
+  }
 
   function setupMonthlyBudgets() {
+    const categoryIds = CATEGORIES.map((c) => c.id);
+    const categoryBuckets = resolveCategoryBuckets(categoryIds, budgetSettings);
+    const method = budgetSettings.budgetMethod || "rule";
+
+    if (method === "avg-spend") {
+      const avgBudgets = averageCategorySpending(entries, month, categoryIds, 3);
+      const nextBudgets = {};
+      for (const id of categoryIds) {
+        nextBudgets[id] = categoryBuckets[id] === "skip" ? 0 : avgBudgets[id] || 0;
+      }
+      setBudgets(nextBudgets);
+      setBudgetDrafts({});
+      setImportNote("Category limits set from your 3-month average spending.");
+      return;
+    }
+
     const customIncome = parseFloat(budgetCustomIncome);
     const income =
       Number.isFinite(customIncome) && customIncome > 0
@@ -1845,19 +1893,22 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
 
     const result = computeBudgetAllocation({
       monthlyIncome: income,
-      modelId: "50-30-20",
-      categoryIds: CATEGORIES.map((c) => c.id),
+      modelId: budgetSettings.allocationModelId || "50-30-20",
+      categoryIds,
       housingEmiAmount: emi,
+      categoryBuckets,
     });
 
     setBudgets(result.budgets);
     setBudgetDrafts({});
     if (emi) {
-      setBudgetSettings({ housingEmiAmount: emi });
+      setBudgetSettings((prev) => ({ ...prev, housingEmiAmount: emi }));
       if (budgetEmiInput === "") setBudgetEmiInput(String(emi));
     }
+    const modelLabel =
+      result.model?.label?.split("—")[0]?.trim() || budgetSettings.allocationModelId;
     setImportNote(
-      `Budgets set from ${fmtMoney(income)} income` +
+      `Budgets set from ${fmtMoney(income)} income (${modelLabel})` +
         (emi ? ` · Housing = EMI ${fmtMoney(emi)}` : "") +
         "."
     );
@@ -2633,6 +2684,17 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
           .lg-header { flex-direction: column !important; align-items: flex-start !important; gap: 16px !important; }
           .goals-form-grid, .accounts-form-grid { grid-template-columns: 1fr !important; }
         }
+        .ledger-sticky-bar {
+          position: sticky;
+          top: 0;
+          z-index: 40;
+          background: #F6F1E6;
+          padding: 12px 0 14px;
+          margin-bottom: 8px;
+          border-bottom: 1px solid #E4DCC5;
+        }
+        .ledger-tab-btn { border-radius: 4px !important; }
+        .ledger-tab-btn.active { background: #1F2A22; color: #F6F1E6; border-color: #1F2A22; }
         @media print {
           body * { visibility: hidden; }
           .period-report-print, .period-report-print * { visibility: visible; }
@@ -2860,6 +2922,58 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
           )}
         </div>
 
+        <LedgerPeriodBar
+          periodMode={periodMode}
+          switchPeriodMode={switchPeriodMode}
+          year={year}
+          setYear={setYear}
+          month={month}
+          setMonth={setMonth}
+          weekAnchor={weekAnchor}
+          setWeekAnchor={setWeekAnchor}
+          weekRange={weekRange}
+          years={years}
+          months={months}
+          monthNameOnly={monthNameOnly}
+          weekLabel={weekLabel}
+          todayStr={todayStr}
+          toISODate={toISODate}
+          setPeriodDrillDay={setPeriodDrillDay}
+          setFilterCat={setFilterCat}
+          onExportCSV={exportCSV}
+          onPeriodReport={openPeriodReport}
+          onBackup={exportBackup}
+          onRestore={() => backupInputRef.current?.click()}
+          exportDisabled={displayEntries.length === 0}
+          reportDisabled={periodEntries.length === 0 || globalSearchActive}
+        >
+          <LedgerTabBar activeTab={activeTab} onChange={setActiveTab} />
+        </LedgerPeriodBar>
+
+        {importNote && (
+          <div
+            style={{
+              fontSize: 12.5,
+              color: "#3C6E91",
+              marginBottom: 20,
+            }}
+          >
+            {importNote}
+          </div>
+        )}
+
+        {backupNote && (
+          <div
+            style={{
+              fontSize: 12.5,
+              color: "#3C6E91",
+              marginBottom: 20,
+            }}
+          >
+            {backupNote}
+          </div>
+        )}
+
         <input
           ref={statementInputRef}
           type="file"
@@ -2875,6 +2989,8 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
           onChange={handleImportFile}
         />
 
+        {activeTab === "transactions" && (
+          <>
         {/* Primary input: bank statement import */}
         <div
           onDragOver={(e) => {
@@ -2984,18 +3100,6 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
               : "Or drag and drop a .csv, .xlsx, or .xls file"}
           </div>
         </div>
-        {importNote && (
-          <div
-            style={{
-              fontSize: 12.5,
-              color: "#3C6E91",
-              marginTop: -20,
-              marginBottom: 28,
-            }}
-          >
-            {importNote}
-          </div>
-        )}
 
         {/* Manual entry — collapsed by default; statement import is primary */}
         <CollapsiblePanel
@@ -3449,7 +3553,11 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
           </div>
         </form>
         </CollapsiblePanel>
+          </>
+        )}
 
+        {activeTab === "plan" && !globalSearchActive && (
+          <>
         {/* Recurring entries */}
         <div
           style={{
@@ -3636,151 +3744,61 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
           )}
         </div>
 
-        {/* Period toggle + navigation */}
-        <div
-          style={{
-            display: "flex",
-            gap: 10,
-            marginBottom: 16,
-            flexWrap: "wrap",
-            alignItems: "center",
-          }}
+        <CollapsiblePanel
+          title="Savings goals"
+          meta={
+            savingsGoals.length > 0
+              ? `${savingsGoals.length} goal${savingsGoals.length === 1 ? "" : "s"}`
+              : "Track progress toward targets"
+          }
+          open={showSavingsGoals}
+          onToggle={() => setShowSavingsGoals((v) => !v)}
         >
-          <div style={{ display: "flex" }}>
-            <button
-              type="button"
-              className={`seg-btn ${periodMode === "year" ? "active" : ""}`}
-              style={{ borderRadius: "4px 0 0 4px" }}
-              onClick={() => switchPeriodMode("year")}
-            >
-              Year
-            </button>
-            <button
-              type="button"
-              className={`seg-btn ${periodMode === "month" ? "active" : ""}`}
-              style={{ borderRadius: 0, borderLeft: "none" }}
-              onClick={() => switchPeriodMode("month")}
-            >
-              Month
-            </button>
-            <button
-              type="button"
-              className={`seg-btn ${periodMode === "week" ? "active" : ""}`}
-              style={{ borderRadius: "0 4px 4px 0", borderLeft: "none" }}
-              onClick={() => switchPeriodMode("week")}
-            >
-              Week
-            </button>
+          <SavingsGoalsPanel
+            goals={savingsGoals}
+            onAdd={addSavingsGoal}
+            onUpdate={updateSavingsGoal}
+            onRemove={removeSavingsGoal}
+          />
+        </CollapsiblePanel>
+
+        {periodMode === "month" ? (
+          <MonthlyBudgetSection
+            monthLabel={monthLabel(month)}
+            categories={CATEGORIES}
+            catTotals={catTotals}
+            budgets={budgets}
+            budgetValueFor={budgetValueFor}
+            updateBudgetDraft={updateBudgetDraft}
+            commitBudget={commitBudget}
+            fmtMoney={fmtMoney}
+            zeroSpendRebalancePreview={zeroSpendRebalancePreview}
+            onMoveUnusedBudgets={moveUnusedBudgets}
+            catMap={catMap}
+            budgetSettings={budgetSettings}
+            onBudgetSettingsChange={handleBudgetSettingsChange}
+            onCategoryBucketChange={handleCategoryBucketChange}
+            onApplyBudgets={setupMonthlyBudgets}
+            avgSpendingByCategory={avgSpendingByCategory}
+            onUseCategoryAvg={handleUseCategoryAvg}
+          />
+        ) : (
+          <div
+            style={{
+              fontSize: 12.5,
+              color: "#74836A",
+              marginBottom: 28,
+            }}
+          >
+            Category limits are tracked monthly — switch to Month view in the toolbar above.
           </div>
+        )}
 
-          {periodMode === "year" ? (
-            <select
-              className="ledger-select"
-              style={{ width: "auto", minWidth: 100 }}
-              value={year}
-              onChange={(e) => {
-                setYear(e.target.value);
-                setPeriodDrillDay(null);
-                setFilterCat("all");
-              }}
-            >
-              {years.map((y) => (
-                <option key={y} value={y}>
-                  {y}
-                </option>
-              ))}
-            </select>
-          ) : periodMode === "month" ? (
-            <>
-              <select
-                className="ledger-select"
-                style={{ width: "auto", minWidth: 100 }}
-                value={year}
-                onChange={(e) => {
-                  setYear(e.target.value);
-                  setPeriodDrillDay(null);
-                  setFilterCat("all");
-                }}
-              >
-                {years.map((y) => (
-                  <option key={y} value={y}>
-                    {y}
-                  </option>
-                ))}
-              </select>
-              <select
-                className="ledger-select"
-                style={{ width: "auto", minWidth: 140 }}
-                value={month}
-                onChange={(e) => {
-                  setMonth(e.target.value);
-                  setPeriodDrillDay(null);
-                  setFilterCat("all");
-                }}
-              >
-                {months.map((m) => (
-                  <option key={m} value={m}>
-                    {monthNameOnly(m)}
-                  </option>
-                ))}
-              </select>
-            </>
-          ) : (
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <button
-                type="button"
-                className="ledger-btn ledger-btn-ghost"
-                style={{ padding: "9px 12px" }}
-                onClick={() => {
-                  const d = new Date(weekAnchor + "T00:00:00");
-                  d.setDate(d.getDate() - 7);
-                  setWeekAnchor(toISODate(d));
-                  setPeriodDrillDay(null);
-                  setFilterCat("all");
-                }}
-              >
-                &larr;
-              </button>
-              <div
-                style={{
-                  fontSize: 13.5,
-                  fontFamily: "'IBM Plex Mono', monospace",
-                  color: "#1F2A22",
-                  minWidth: 150,
-                  textAlign: "center",
-                }}
-              >
-                {weekLabel(weekRange)}
-              </div>
-              <button
-                type="button"
-                className="ledger-btn ledger-btn-ghost"
-                style={{ padding: "9px 12px" }}
-                onClick={() => {
-                  const d = new Date(weekAnchor + "T00:00:00");
-                  d.setDate(d.getDate() + 7);
-                  setWeekAnchor(toISODate(d));
-                  setPeriodDrillDay(null);
-                  setFilterCat("all");
-                }}
-              >
-                &rarr;
-              </button>
-              <button
-                type="button"
-                className="ledger-btn ledger-btn-ghost"
-                onClick={() => {
-                  setWeekAnchor(todayStr());
-                  setPeriodDrillDay(null);
-                  setFilterCat("all");
-                }}
-              >
-                This week
-              </button>
-            </div>
-          )}
-        </div>
+          </>
+        )}
 
+        {activeTab === "transactions" && (
+          <>
         {/* Filters */}
         <div
           style={{
@@ -3859,32 +3877,6 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
               ))}
             </select>
           )}
-          <button
-            type="button"
-            className="ledger-btn ledger-btn-ghost"
-            style={{ textTransform: "none", letterSpacing: "normal", fontWeight: 500 }}
-            onClick={exportCSV}
-            disabled={displayEntries.length === 0}
-          >
-            Export CSV
-          </button>
-          <button
-            type="button"
-            className="ledger-btn ledger-btn-ghost"
-            style={{ textTransform: "none", letterSpacing: "normal", fontWeight: 500 }}
-            onClick={openPeriodReport}
-            disabled={periodEntries.length === 0 || globalSearchActive}
-          >
-            Period report
-          </button>
-          <button
-            type="button"
-            className="ledger-btn ledger-btn-ghost"
-            style={{ textTransform: "none", letterSpacing: "normal", fontWeight: 500 }}
-            onClick={exportBackup}
-          >
-            Backup
-          </button>
           <input
             ref={backupInputRef}
             type="file"
@@ -3892,14 +3884,6 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
             style={{ display: "none" }}
             onChange={handleRestoreBackup}
           />
-          <button
-            type="button"
-            className="ledger-btn ledger-btn-ghost"
-            style={{ textTransform: "none", letterSpacing: "normal", fontWeight: 500 }}
-            onClick={() => backupInputRef.current?.click()}
-          >
-            Restore
-          </button>
           {hiddenEntryCount > 0 && (
             <label
               style={{
@@ -4088,6 +4072,92 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
           </div>
         )}
 
+        {globalSearchActive && (
+          <div
+            style={{
+              fontSize: 12.5,
+              color: "#3C6E91",
+              marginBottom: 20,
+              background: "#F6F1E6",
+              border: "1px solid #E4DCC5",
+              borderRadius: 6,
+              padding: "10px 14px",
+            }}
+          >
+            Searching all entries for &ldquo;{search.trim()}&rdquo; &mdash;{" "}
+            {globalSearchTotals?.count ?? 0} result
+            {(globalSearchTotals?.count ?? 0) === 1 ? "" : "s"}
+            {globalSearchTotals && globalSearchTotals.count > 0 && (
+              <span style={{ color: "#74836A" }}>
+                {" "}
+                (expenses {fmtMoney(globalSearchTotals.expense)}
+                {globalSearchTotals.income > 0 &&
+                  ` · income ${fmtMoney(globalSearchTotals.income)}`}
+                {globalSearchTotals.investment > 0 &&
+                  ` · investments ${fmtMoney(globalSearchTotals.investment)}`}
+                )
+              </span>
+            )}
+          </div>
+        )}
+
+        {!loaded && (
+          <div style={{ color: "#74836A", fontSize: 14, padding: "20px 0" }}>
+            Loading your ledger...
+          </div>
+        )}
+
+        {loaded && displayEntries.length === 0 && (
+          <div
+            style={{
+              border: "1px dashed #D8CDB4",
+              borderRadius: 8,
+              padding: "40px 20px",
+              textAlign: "center",
+              color: "#74836A",
+              fontSize: 14,
+              marginBottom: 28,
+            }}
+          >
+            {globalSearchActive
+              ? `No entries match "${search.trim()}". Try another keyword or clear search.`
+              : entries.length === 0
+              ? "No transactions yet. Import your bank statement to populate the ledger."
+              : "No entries for this period or filter."}
+            {!globalSearchActive && entries.length === 0 && (
+              <div style={{ marginTop: 16 }}>
+                <button
+                  type="button"
+                  className="ledger-btn"
+                  style={{
+                    textTransform: "none",
+                    letterSpacing: "normal",
+                    fontWeight: 600,
+                  }}
+                  onClick={() => statementInputRef.current?.click()}
+                >
+                  Choose statement file
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {loaded && displayEntries.length > 0 && (
+          <CollapsiblePanel
+            title="All transactions"
+            meta={`${displayEntries.length} entr${displayEntries.length === 1 ? "y" : "ies"} · ${periodLabel}`}
+            open={showTransactions}
+            onToggle={() => setShowTransactions((v) => !v)}
+          >
+            {renderEntryRows(displayEntries)}
+          </CollapsiblePanel>
+        )}
+          </>
+        )}
+
+        {activeTab === "overview" && !globalSearchActive && (
+          <>
         {!globalSearchActive &&
           !periodDrillDay &&
           filterCat === "all" &&
@@ -4112,122 +4182,51 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
             </div>
           )}
 
-        {backupNote && (
-          <div
-            style={{
-              fontSize: 12.5,
-              color: "#3C6E91",
-              marginTop: -16,
-              marginBottom: 20,
+        {periodMode === "month" && (
+          <MonthlyAllocationPanel
+            overview={monthlyAllocationOverview}
+            monthLabel={monthLabel(month)}
+            drillGroups={allocationDrillData?.drillGroups}
+            categoryTotalsByBucket={allocationDrillData?.categoryTotalsByBucket}
+            fmtDateFull={fmtDateFull}
+            catInfoFor={catInfoFor}
+            onCategoryClick={drillToCategory}
+            budgetSetup={{
+              suggestedIncome: suggestedBudgetIncome,
+              monthIncome: monthIncomeForBudget,
+              detectedEmi: detectedHomeLoanEmi,
+              savedEmi: budgetSettings.housingEmiAmount,
+              customIncome: budgetCustomIncome,
+              onCustomIncomeChange: setBudgetCustomIncome,
+              emiInput: budgetEmiInput,
+              onEmiInputChange: setBudgetEmiInput,
+              onSetBudgets: setupMonthlyBudgets,
+              fmtMoney,
+              budgetMethod: budgetSettings.budgetMethod,
+              onBudgetMethodChange: (v) => handleBudgetSettingsChange({ budgetMethod: v }),
+              allocationModelId: budgetSettings.allocationModelId,
+              onAllocationModelChange: (v) =>
+                handleBudgetSettingsChange({ allocationModelId: v }),
             }}
-          >
-            {backupNote}
-          </div>
+          />
         )}
 
-        {cloudSync && (
+        {!globalSearchActive && savingTips.length > 0 && (
           <CollapsiblePanel
-            title="Google Drive backup"
-            meta={
-              backupSchedule.enabled
-                ? `${BACKUP_FREQUENCIES.find((f) => f.id === backupSchedule.frequency)?.label || "Daily"} schedule · Last: ${formatLastBackup(backupSchedule.lastBackupAt)}`
-                : "Schedule automatic backups to your Google Drive"
-            }
-            open={showDriveBackup}
-            onToggle={() => setShowDriveBackup((v) => !v)}
+            title="Saving tips"
+            meta={`${savingTips.length} suggestion${savingTips.length === 1 ? "" : "s"} · ${periodLabel}`}
+            open={showSavingTips}
+            onToggle={() => setShowSavingTips((v) => !v)}
           >
-            {!userHasGoogleProvider(user) ? (
-              <div style={{ fontSize: 13.5, color: "#74836A", lineHeight: 1.55 }}>
-                Scheduled Drive backup requires signing in with Google. Email/password
-                accounts can still use local Backup / Restore.
-              </div>
-            ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-                <label
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 10,
-                    fontSize: 13.5,
-                    color: "#1F2A22",
-                    cursor: driveBackupBusy ? "wait" : "pointer",
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={backupSchedule.enabled}
-                    disabled={driveBackupBusy}
-                    onChange={(e) => {
-                      if (e.target.checked) {
-                        enableDriveBackupSchedule();
-                      } else {
-                        setBackupSchedule((prev) => ({ ...prev, enabled: false }));
-                      }
-                    }}
-                  />
-                  Enable scheduled backup to Google Drive
-                </label>
-
-                <div>
-                  <label
-                    style={{
-                      fontSize: 11,
-                      fontWeight: 600,
-                      color: "#74836A",
-                      textTransform: "uppercase",
-                      letterSpacing: "0.06em",
-                      display: "block",
-                      marginBottom: 5,
-                    }}
-                  >
-                    Frequency
-                  </label>
-                  <select
-                    className="ledger-select"
-                    style={{ maxWidth: 180 }}
-                    value={backupSchedule.frequency}
-                    disabled={!backupSchedule.enabled || driveBackupBusy}
-                    onChange={(e) =>
-                      setBackupSchedule((prev) => ({
-                        ...prev,
-                        frequency: e.target.value,
-                      }))
-                    }
-                  >
-                    {BACKUP_FREQUENCIES.map((freq) => (
-                      <option key={freq.id} value={freq.id}>
-                        {freq.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div style={{ fontSize: 13, color: "#74836A", lineHeight: 1.55 }}>
-                  Backups are saved to the <strong>Expense Book Backups</strong> folder in
-                  your Google Drive when you open the app. The last 14 backups are kept.
-                  <div style={{ marginTop: 6 }}>
-                    Last backup: {formatLastBackup(backupSchedule.lastBackupAt)}
-                  </div>
-                </div>
-
-                <div>
-                  <button
-                    type="button"
-                    className="ledger-btn ledger-btn-ghost"
-                    style={{
-                      textTransform: "none",
-                      letterSpacing: "normal",
-                      fontWeight: 500,
-                    }}
-                    disabled={driveBackupBusy}
-                    onClick={() => runDriveBackup({ manual: true, forceAuth: true })}
-                  >
-                    {driveBackupBusy ? "Uploading..." : "Backup to Drive now"}
-                  </button>
-                </div>
-              </div>
-            )}
+            <SavingTipsPanel
+              tips={savingTips}
+              periodLabel={periodLabel}
+              onCategoryClick={(categoryId) => drillToCategory(categoryId, "expense")}
+            />
           </CollapsiblePanel>
+        )}
+
+          </>
         )}
 
         {statementImport && (
@@ -4946,85 +4945,8 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
           </div>
         )}
 
-        {globalSearchActive && (
-          <div
-            style={{
-              fontSize: 12.5,
-              color: "#3C6E91",
-              marginTop: -12,
-              marginBottom: 20,
-              background: "#F6F1E6",
-              border: "1px solid #E4DCC5",
-              borderRadius: 6,
-              padding: "10px 14px",
-            }}
-          >
-            Searching all entries for &ldquo;{search.trim()}&rdquo; &mdash;{" "}
-            {globalSearchTotals?.count ?? 0} result
-            {(globalSearchTotals?.count ?? 0) === 1 ? "" : "s"}
-            {globalSearchTotals && globalSearchTotals.count > 0 && (
-              <span style={{ color: "#74836A" }}>
-                {" "}
-                (expenses {fmtMoney(globalSearchTotals.expense)}
-                {globalSearchTotals.income > 0 &&
-                  ` · income ${fmtMoney(globalSearchTotals.income)}`}
-                {globalSearchTotals.investment > 0 &&
-                  ` · investments ${fmtMoney(globalSearchTotals.investment)}`}
-                )
-              </span>
-            )}
-          </div>
-        )}
-
-        {!globalSearchActive && savingTips.length > 0 && (
-          <CollapsiblePanel
-            title="Saving tips"
-            meta={`${savingTips.length} suggestion${savingTips.length === 1 ? "" : "s"} · ${periodLabel}`}
-            open={showSavingTips}
-            onToggle={() => setShowSavingTips((v) => !v)}
-          >
-            <SavingTipsPanel
-              tips={savingTips}
-              periodLabel={periodLabel}
-              onCategoryClick={(categoryId) => drillToCategory(categoryId, "expense")}
-            />
-          </CollapsiblePanel>
-        )}
-
-        {!globalSearchActive && (
-          <CollapsiblePanel
-            title="Savings goals"
-            meta={
-              savingsGoals.length > 0
-                ? `${savingsGoals.length} goal${savingsGoals.length === 1 ? "" : "s"}`
-                : "Track progress toward targets"
-            }
-            open={showSavingsGoals}
-            onToggle={() => setShowSavingsGoals((v) => !v)}
-          >
-            <SavingsGoalsPanel
-              goals={savingsGoals}
-              onAdd={addSavingsGoal}
-              onUpdate={updateSavingsGoal}
-              onRemove={removeSavingsGoal}
-            />
-          </CollapsiblePanel>
-        )}
-
-        {!globalSearchActive && (
-          <CollapsiblePanel
-            title="Accounts"
-            meta={
-              accounts.length > 0
-                ? `${accounts.length} account${accounts.length === 1 ? "" : "s"}`
-                : "Bank, card, cash, or wallet"
-            }
-            open={showAccounts}
-            onToggle={() => setShowAccounts((v) => !v)}
-          >
-            <AccountsPanel accounts={accounts} onAdd={addAccount} onRemove={removeAccount} />
-          </CollapsiblePanel>
-        )}
+        {activeTab === "overview" && !globalSearchActive && (
+          <>
 
         {cumulativeExpenseChart &&
           (filterType === "all" || filterType === "expense") && (
@@ -5051,7 +4973,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
               (periodMode === "week" && dailyExpenseTotals.length > 0)))) &&
           (filterType === "all" || filterType === "expense") && (
             <CollapsiblePanel
-              title="Expense details"
+              title="Spending breakdown"
               meta={`${fmtMoney(periodExpenseTotal)} · ${expenseEntries.length} entr${expenseEntries.length === 1 ? "y" : "ies"} · ${periodLabel}`}
               open={showExpenseDetails}
               onToggle={() => setShowExpenseDetails((v) => !v)}
@@ -5211,19 +5133,6 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                 </div>
               )}
 
-              <div
-                style={{
-                  fontSize: 11,
-                  fontWeight: 600,
-                  letterSpacing: "0.1em",
-                  textTransform: "uppercase",
-                  color: "#74836A",
-                  marginBottom: 10,
-                }}
-              >
-                Expense entries
-              </div>
-              {renderEntryRows(expenseEntries)}
             </CollapsiblePanel>
           )}
 
@@ -5289,19 +5198,6 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                 </div>
               )}
 
-              <div
-                style={{
-                  fontSize: 11,
-                  fontWeight: 600,
-                  letterSpacing: "0.1em",
-                  textTransform: "uppercase",
-                  color: "#74836A",
-                  marginBottom: 10,
-                }}
-              >
-                Investment entries
-              </div>
-              {renderEntryRows(investmentEntries)}
             </CollapsiblePanel>
             </>
           )}
@@ -5367,194 +5263,95 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                   </div>
                 </div>
               )}
-              {renderEntryRows(incomeEntries)}
             </CollapsiblePanel>
             </>
           )}
 
-        {!loaded && (
-          <div style={{ color: "#74836A", fontSize: 14, padding: "20px 0" }}>
-            Loading your ledger...
-          </div>
+          </>
         )}
 
-        {loaded &&
-          expenseEntries.length === 0 &&
-          investmentEntries.length === 0 &&
-          incomeEntries.length === 0 && (
-            <div
-              style={{
-                border: "1px dashed #D8CDB4",
-                borderRadius: 8,
-                padding: "40px 20px",
-                textAlign: "center",
-                color: "#74836A",
-                fontSize: 14,
-                marginBottom: 28,
-              }}
-            >
-              {globalSearchActive
-                ? `No entries match "${search.trim()}". Try another keyword or clear search.`
-                : entries.length === 0
-                ? "No transactions yet. Import your bank statement to populate the ledger."
-                : "No entries for this period or filter."}
-              {!globalSearchActive && entries.length === 0 && (
-                <div style={{ marginTop: 16 }}>
-                  <button
-                    type="button"
-                    className="ledger-btn"
-                    style={{
-                      textTransform: "none",
-                      letterSpacing: "normal",
-                      fontWeight: 600,
-                    }}
-                    onClick={() => statementInputRef.current?.click()}
-                  >
-                    Choose statement file
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
-
-        {/* Monthly budgets */}
-        {periodMode === "month" && !globalSearchActive ? (
-          <div style={{ marginBottom: 28 }}>
-            <MonthlyAllocationPanel
-              overview={monthlyAllocationOverview}
-              monthLabel={monthLabel(month)}
-              drillGroups={allocationDrillData?.drillGroups}
-              categoryTotalsByBucket={allocationDrillData?.categoryTotalsByBucket}
-              fmtDateFull={fmtDateFull}
-              catInfoFor={catInfoFor}
-              onCategoryClick={drillToCategory}
-            />
-
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "flex-end",
-                gap: 12,
-                flexWrap: "wrap",
-                marginBottom: 10,
-              }}
-            >
-              <div
-                style={{
-                  fontSize: 11,
-                  fontWeight: 600,
-                  letterSpacing: "0.1em",
-                  textTransform: "uppercase",
-                  color: "#74836A",
-                }}
-              >
-                Monthly budgets &mdash; {monthLabel(month)}
+        {activeTab === "settings" && !globalSearchActive && (
+          <>
+        {cloudSync && (
+          <CollapsiblePanel
+            title="Google Drive backup"
+            meta={
+              backupSchedule.enabled
+                ? `${BACKUP_FREQUENCIES.find((f) => f.id === backupSchedule.frequency)?.label || "Daily"} schedule · Last: ${formatLastBackup(backupSchedule.lastBackupAt)}`
+                : "Schedule automatic backups to your Google Drive"
+            }
+            open={showDriveBackup}
+            onToggle={() => setShowDriveBackup((v) => !v)}
+          >
+            {!userHasGoogleProvider(user) ? (
+              <div style={{ fontSize: 13.5, color: "#74836A", lineHeight: 1.55 }}>
+                Scheduled Drive backup requires signing in with Google. Email/password
+                accounts can still use local Backup / Restore from Actions.
               </div>
-            </div>
-
-            <div
-              style={{
-                border: "1px solid #D8CDB4",
-                borderRadius: 8,
-                background: "#F6F1E6",
-                padding: "14px 16px",
-                marginBottom: 12,
-              }}
-            >
-              <div style={{ fontSize: 12.5, color: "#74836A", marginBottom: 12, lineHeight: 1.45 }}>
-                Set all limits at once using the <strong>50/30/20</strong> rule.
-                {suggestedBudgetIncome > 0 ? (
-                  <>
-                    {" "}
-                    Using income {fmtMoney(suggestedBudgetIncome)}
-                    {monthIncomeForBudget > 0 ? " from this month" : " (3-month avg)"}.
-                  </>
-                ) : (
-                  " Enter your monthly income below."
-                )}
-                {detectedHomeLoanEmi && (
-                  <>
-                    {" "}
-                    Home loan EMI detected: {fmtMoney(detectedHomeLoanEmi.amount)}.
-                  </>
-                )}
-              </div>
-              <div
-                style={{
-                  display: "flex",
-                  gap: 10,
-                  flexWrap: "wrap",
-                  alignItems: "flex-end",
-                }}
-              >
-                <div>
-                  <label style={budgetFieldLabel}>Monthly income</label>
-                  <input
-                    className="ledger-input"
-                    type="number"
-                    min="0"
-                    step="1000"
-                    placeholder={
-                      suggestedBudgetIncome > 0 ? String(suggestedBudgetIncome) : "e.g. 80000"
-                    }
-                    value={budgetCustomIncome}
-                    onChange={(e) => setBudgetCustomIncome(e.target.value)}
-                    style={{ width: 140 }}
-                  />
-                </div>
-                <div>
-                  <label style={budgetFieldLabel}>Home loan EMI</label>
-                  <input
-                    className="ledger-input"
-                    type="number"
-                    min="0"
-                    step="100"
-                    placeholder={
-                      budgetSettings.housingEmiAmount
-                        ? String(budgetSettings.housingEmiAmount)
-                        : detectedHomeLoanEmi
-                        ? String(detectedHomeLoanEmi.amount)
-                        : "Optional"
-                    }
-                    value={budgetEmiInput}
-                    onChange={(e) => setBudgetEmiInput(e.target.value)}
-                    style={{ width: 140 }}
-                  />
-                </div>
-                <button
-                  type="button"
-                  className="ledger-btn"
-                  style={{ padding: "10px 16px" }}
-                  onClick={setupMonthlyBudgets}
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                <label
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                    fontSize: 13.5,
+                    color: "#1F2A22",
+                    cursor: driveBackupBusy ? "wait" : "pointer",
+                  }}
                 >
-                  Set budgets
-                </button>
-              </div>
-            </div>
-
-            {zeroSpendRebalancePreview.pool > 0 && (
-              <div
-                style={{
-                  border: "1px solid #D8CDB4",
-                  borderRadius: 8,
-                  background: "#FFFDF8",
-                  padding: "12px 16px",
-                  marginBottom: 12,
-                  display: "flex",
-                  gap: 12,
-                  flexWrap: "wrap",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                }}
-              >
-                <div style={{ fontSize: 12.5, color: "#4A5A4E", lineHeight: 1.45, flex: 1 }}>
-                  {zeroSpendRebalancePreview.donors
-                    .map((d) => `${catMap[d.id]?.label || d.id} (${fmtMoney(d.amount)})`)
-                    .join(", ")}{" "}
-                  {zeroSpendRebalancePreview.donors.length === 1 ? "has" : "have"} no spending
-                  this month — move {fmtMoney(zeroSpendRebalancePreview.pool)} to over-budget
-                  categories?
+                  <input
+                    type="checkbox"
+                    checked={backupSchedule.enabled}
+                    disabled={driveBackupBusy}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        enableDriveBackupSchedule();
+                      } else {
+                        setBackupSchedule((prev) => ({ ...prev, enabled: false }));
+                      }
+                    }}
+                  />
+                  Enable scheduled backup to Google Drive
+                </label>
+                <div>
+                  <label
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 600,
+                      color: "#74836A",
+                      textTransform: "uppercase",
+                      letterSpacing: "0.06em",
+                      display: "block",
+                      marginBottom: 5,
+                    }}
+                  >
+                    Frequency
+                  </label>
+                  <select
+                    className="ledger-select"
+                    style={{ maxWidth: 180 }}
+                    value={backupSchedule.frequency}
+                    disabled={!backupSchedule.enabled || driveBackupBusy}
+                    onChange={(e) =>
+                      setBackupSchedule((prev) => ({
+                        ...prev,
+                        frequency: e.target.value,
+                      }))
+                    }
+                  >
+                    {BACKUP_FREQUENCIES.map((freq) => (
+                      <option key={freq.id} value={freq.id}>
+                        {freq.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div style={{ fontSize: 13, color: "#74836A", lineHeight: 1.55 }}>
+                  Backups are saved to <strong>Expense Book Backups</strong> in Google Drive.
+                  <div style={{ marginTop: 6 }}>
+                    Last backup: {formatLastBackup(backupSchedule.lastBackupAt)}
+                  </div>
                 </div>
                 <button
                   type="button"
@@ -5563,123 +5360,28 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                     textTransform: "none",
                     letterSpacing: "normal",
                     fontWeight: 500,
-                    padding: "8px 14px",
-                    whiteSpace: "nowrap",
                   }}
-                  onClick={moveUnusedBudgets}
-                  disabled={!zeroSpendRebalancePreview.applied}
+                  disabled={driveBackupBusy}
+                  onClick={() => runDriveBackup({ manual: true, forceAuth: true })}
                 >
-                  Move unused limits
+                  {driveBackupBusy ? "Uploading..." : "Backup to Drive now"}
                 </button>
               </div>
             )}
-
-            <div
-              style={{
-                border: "1px solid #D8CDB4",
-                borderRadius: 8,
-                background: "#FFFDF8",
-                overflow: "hidden",
-              }}
-            >
-              {CATEGORIES.map((c, i) => {
-                const spent = (catTotals.find((t) => t.id === c.id) || {}).total || 0;
-                const budget = budgets[c.id] || 0;
-                const hasBudget = budget > 0;
-                const pct = hasBudget ? Math.min((spent / budget) * 100, 100) : 0;
-                const over = hasBudget && spent > budget;
-                const barColor = !hasBudget
-                  ? "#D8CDB4"
-                  : over
-                  ? "#A93B3B"
-                  : pct >= 80
-                  ? "#C08A28"
-                  : "#6B8E4E";
-                return (
-                  <div
-                    key={c.id}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 14,
-                      padding: "12px 16px",
-                      borderTop: i === 0 ? "none" : "1px dashed #E4DCC5",
-                      flexWrap: "wrap",
-                    }}
-                  >
-                    <div style={{ width: 130, fontSize: 12.5, color: "#1F2A22" }}>
-                      {c.label}
-                      {hasBudget && spent === 0 && (
-                        <div style={{ fontSize: 10, color: "#8B5E34", marginTop: 2 }}>
-                          Unused {fmtMoney(budget)}
-                        </div>
-                      )}
-                    </div>
-                    <div
-                      style={{
-                        flex: 1,
-                        minWidth: 120,
-                        background: "#EDE6D6",
-                        height: 8,
-                        borderRadius: 4,
-                        overflow: "hidden",
-                      }}
-                    >
-                      <div
-                        style={{
-                          width: hasBudget ? `${pct}%` : spent > 0 ? "100%" : "0%",
-                          background: barColor,
-                          height: "100%",
-                          borderRadius: 4,
-                        }}
-                      />
-                    </div>
-                    <div
-                      style={{
-                        fontFamily: "'IBM Plex Mono', monospace",
-                        fontSize: 12,
-                        color: over ? "#A93B3B" : "#4A5A4E",
-                        width: 150,
-                        textAlign: "right",
-                      }}
-                    >
-                      {hasBudget
-                        ? `${fmtMoney(spent)} of ${fmtMoney(budget)}`
-                        : spent > 0
-                        ? `${fmtMoney(spent)} spent`
-                        : "No spend yet"}
-                    </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                      <span style={{ fontSize: 11.5, color: "#A69C82" }}>Limit</span>
-                      <input
-                        className="ledger-input"
-                        style={{ width: 90, padding: "6px 8px", fontSize: 12.5 }}
-                        type="number"
-                        min="0"
-                        step="1"
-                        placeholder=""
-                        value={budgetValueFor(c.id)}
-                        onChange={(e) => updateBudgetDraft(c.id, e.target.value)}
-                        onBlur={() => commitBudget(c.id)}
-                      />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        ) : !globalSearchActive ? (
-          <div
-            style={{
-              fontSize: 12.5,
-              color: "#74836A",
-              marginBottom: 28,
-            }}
-          >
-            Budgets are tracked monthly &mdash; switch to Month view to set or check limits.
-            {periodMode === "year" && " Year view shows spending totals only."}
-          </div>
-        ) : null}
+          </CollapsiblePanel>
+        )}
+        <CollapsiblePanel
+          title="Accounts"
+          meta={
+            accounts.length > 0
+              ? `${accounts.length} account${accounts.length === 1 ? "" : "s"}`
+              : "Bank, card, cash, or wallet"
+          }
+          open={showAccounts}
+          onToggle={() => setShowAccounts((v) => !v)}
+        >
+          <AccountsPanel accounts={accounts} onAdd={addAccount} onRemove={removeAccount} />
+        </CollapsiblePanel>
 
         {/* Category rules */}
         {categoryRuleCount > 0 && (
@@ -5807,6 +5509,9 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
               </div>
             )}
           </CollapsiblePanel>
+        )}
+
+          </>
         )}
 
         {loadError && (

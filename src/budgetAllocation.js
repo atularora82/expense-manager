@@ -94,6 +94,7 @@ export function computeBudgetAllocation({
   modelId,
   categoryIds,
   housingEmiAmount = null,
+  categoryBuckets = null,
 }) {
   const model = getAllocationModel(modelId);
   const income = Math.max(0, Number(monthlyIncome) || 0);
@@ -102,12 +103,39 @@ export function computeBudgetAllocation({
   const wantsPool = income * model.wants;
   const savingsPool = income * model.savings;
 
+  const bucketMap = categoryBuckets || {};
+  const bucketFor = (id) => {
+    if (bucketMap[id] === "skip") return "skip";
+    if (bucketMap[id] === "needs" || bucketMap[id] === "wants") return bucketMap[id];
+    return CATEGORY_ALLOCATION[id]?.bucket === "needs" ? "needs" : "wants";
+  };
+  const needsIds = categoryIds.filter((id) => bucketFor(id) === "needs");
+  const wantsIds = categoryIds.filter((id) => bucketFor(id) === "wants");
+
+  function normalizedWeights(ids) {
+    if (ids.length === 0) return {};
+    const raw = ids.map((id) => ({
+      id,
+      weight: CATEGORY_ALLOCATION[id]?.weight ?? 1 / ids.length,
+    }));
+    const sum = raw.reduce((s, r) => s + r.weight, 0) || 1;
+    return Object.fromEntries(raw.map((r) => [r.id, r.weight / sum]));
+  }
+
+  const needsWeights = normalizedWeights(needsIds);
+  const wantsWeights = normalizedWeights(wantsIds);
+
   const budgets = {};
+  for (const id of needsIds) {
+    budgets[id] = roundBudget(needsPool * (needsWeights[id] || 0));
+  }
+  for (const id of wantsIds) {
+    budgets[id] = roundBudget(wantsPool * (wantsWeights[id] || 0));
+  }
   for (const id of categoryIds) {
-    const alloc = CATEGORY_ALLOCATION[id];
-    if (!alloc) continue;
-    const pool = alloc.bucket === "needs" ? needsPool : wantsPool;
-    budgets[id] = roundBudget(pool * alloc.weight);
+    if (bucketMap[id] === "skip" && budgets[id] === undefined) {
+      budgets[id] = 0;
+    }
   }
 
   const emi = Number(housingEmiAmount);
@@ -127,6 +155,38 @@ export function computeBudgetAllocation({
     allocatedTotal: allocated,
     housingEmiApplied: Number.isFinite(emi) && emi > 0 ? roundBudget(emi) : null,
   };
+}
+
+export function averageCategorySpending(entries, endYm, categoryIds, months = 3) {
+  const [endY, endM] = endYm.split("-").map(Number);
+  const totals = {};
+  for (const id of categoryIds) totals[id] = 0;
+
+  let y = endY;
+  let m = endM;
+  for (let i = 0; i < months; i++) {
+    const ym = `${y}-${String(m).padStart(2, "0")}`;
+    for (const e of entries) {
+      if (
+        e.type === "expense" &&
+        e.date.slice(0, 7) === ym &&
+        categoryIds.includes(e.category)
+      ) {
+        totals[e.category] = (totals[e.category] || 0) + e.amount;
+      }
+    }
+    m -= 1;
+    if (m < 1) {
+      m = 12;
+      y -= 1;
+    }
+  }
+
+  const budgets = {};
+  for (const id of categoryIds) {
+    budgets[id] = roundBudget((totals[id] || 0) / months);
+  }
+  return budgets;
 }
 
 /**

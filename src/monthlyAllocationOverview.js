@@ -1,23 +1,28 @@
 import { CATEGORY_ALLOCATION, getAllocationModel } from "./budgetAllocation.js";
+import { getCategoryBucket } from "./budgetSettings.js";
 
-export function getExpenseBucket(categoryId) {
-  return CATEGORY_ALLOCATION[categoryId]?.bucket === "needs" ? "needs" : "wants";
+export function getExpenseBucket(categoryId, settings) {
+  const bucket = getCategoryBucket(categoryId, settings);
+  if (bucket === "skip") return "wants";
+  return bucket;
 }
 
-export function entryBelongsToBucket(entry, bucketId) {
+export function entryBelongsToBucket(entry, bucketId, settings) {
   if (bucketId === "investment") return entry.type === "investment";
   if (entry.type !== "expense") return false;
-  return getExpenseBucket(entry.category) === bucketId;
+  const bucket = getCategoryBucket(entry.category, settings);
+  if (bucket === "skip") return false;
+  return bucket === bucketId;
 }
 
-export function groupEntriesForAllocationDrill(entries) {
+export function groupEntriesForAllocationDrill(entries, settings) {
   const needs = [];
   const wants = [];
   const investment = [];
   for (const e of entries) {
-    if (entryBelongsToBucket(e, "needs")) needs.push(e);
-    else if (entryBelongsToBucket(e, "wants")) wants.push(e);
-    else if (entryBelongsToBucket(e, "investment")) investment.push(e);
+    if (entryBelongsToBucket(e, "needs", settings)) needs.push(e);
+    else if (entryBelongsToBucket(e, "wants", settings)) wants.push(e);
+    else if (entryBelongsToBucket(e, "investment", settings)) investment.push(e);
   }
   const byDate = (a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0);
   return {
@@ -42,13 +47,13 @@ export function categoryTotalsInBucket(entries, catMap = {}) {
     .sort((a, b) => b.total - a.total);
 }
 
-export function splitExpensesByBucket(spendingByCategory) {
+export function splitExpensesByBucket(spendingByCategory, settings) {
   let needs = 0;
   let wants = 0;
   for (const [id, amount] of Object.entries(spendingByCategory)) {
     if (!amount) continue;
-    if (CATEGORY_ALLOCATION[id]?.bucket === "needs") needs += amount;
-    else wants += amount;
+    if (getCategoryBucket(id, settings) === "needs") needs += amount;
+    else if (getCategoryBucket(id, settings) !== "skip") wants += amount;
   }
   return { needs, wants };
 }
@@ -114,10 +119,11 @@ export function buildMonthlyAllocationOverview({
   investmentTotal = 0,
   modelId = "50-30-20",
   incomeIsEstimated = false,
+  budgetSettings = null,
 }) {
   const model = getAllocationModel(modelId);
   const incomeBase = Math.max(0, Number(income) || 0);
-  const { needs, wants } = splitExpensesByBucket(spendingByCategory);
+  const { needs, wants } = splitExpensesByBucket(spendingByCategory, budgetSettings);
   const expenseTotal = needs + wants;
 
   if (incomeBase <= 0) {
