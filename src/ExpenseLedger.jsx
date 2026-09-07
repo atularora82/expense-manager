@@ -85,6 +85,7 @@ import SavingsGoalsPanel from "./SavingsGoalsPanel.jsx";
 import AccountsPanel from "./AccountsPanel.jsx";
 import MonthlyAllocationPanel from "./MonthlyAllocationPanel.jsx";
 import MonthlyBudgetSection from "./MonthlyBudgetSection.jsx";
+import SplitTransactionModal from "./SplitTransactionModal.jsx";
 import LedgerTabBar from "./LedgerTabBar.jsx";
 import LedgerPeriodBar from "./LedgerPeriodBar.jsx";
 import {
@@ -108,6 +109,11 @@ import {
   resolveCategoryBuckets,
   setCategoryBucketInSettings,
 } from "./budgetSettings.js";
+import {
+  buildSplitEntriesFromLines,
+  getSplitSiblings,
+  mergeSplitGroup,
+} from "./splitTransaction.js";
 
 const CATEGORIES = [
   { id: "food", label: "Food & Dining", color: "#A93B3B" },
@@ -508,6 +514,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
   const [showAccounts, setShowAccounts] = useState(false);
   const [showSavingsGoals, setShowSavingsGoals] = useState(true);
   const [periodReport, setPeriodReport] = useState(null);
+  const [splitEntry, setSplitEntry] = useState(null);
   const [importAccountId, setImportAccountId] = useState("");
   const [bulkSelectMode, setBulkSelectMode] = useState(false);
   const [selectedEntryIds, setSelectedEntryIds] = useState([]);
@@ -981,6 +988,41 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
   function handleDelete(id) {
     setEntries((prev) => prev.filter((en) => en.id !== id));
     if (editingId === id) resetForm();
+    if (splitEntry?.id === id) setSplitEntry(null);
+  }
+
+  function openSplitModal(entry) {
+    setSplitEntry(entry);
+  }
+
+  function applySplitTransaction(lines) {
+    if (!splitEntry) return;
+    const siblings = getSplitSiblings(entries, splitEntry);
+    const sourceEntry = siblings[0] || splitEntry;
+    const siblingIds = new Set(siblings.map((entry) => entry.id));
+    const splitGroupId = sourceEntry.splitGroupId || uid();
+    const newEntries = buildSplitEntriesFromLines({
+      sourceEntry,
+      lines,
+      splitGroupId,
+      createId: uid,
+    });
+
+    setEntries((prev) => [...prev.filter((entry) => !siblingIds.has(entry.id)), ...newEntries]);
+    setSplitEntry(null);
+    setImportNote(
+      `Split ${sourceEntry.description.includes(" — ") ? sourceEntry.description.split(" — ")[0] : sourceEntry.description} into ${newEntries.length} entries.`
+    );
+  }
+
+  function unsplitTransaction() {
+    if (!splitEntry?.splitGroupId) {
+      setSplitEntry(null);
+      return;
+    }
+    setEntries((prev) => mergeSplitGroup(prev, splitEntry.splitGroupId));
+    setSplitEntry(null);
+    setImportNote("Split transaction merged back into one entry.");
   }
 
   function startListening() {
@@ -1362,6 +1404,17 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                     {en.label}
                   </div>
                 )}
+                {en.splitGroupId && (
+                  <div style={{ fontSize: 11, color: "#8B5E34", marginTop: 3 }}>
+                    Split entry
+                    {en.description.includes(" — ") && (
+                      <span style={{ color: "#A69C82" }}>
+                        {" "}
+                        · {en.description.slice(en.description.indexOf(" — ") + 3)}
+                      </span>
+                    )}
+                  </div>
+                )}
                 {en.accountId && accountLabel(accounts, en.accountId) && (
                   <div style={{ fontSize: 11, color: "#A69C82", marginTop: 3 }}>
                     {accountLabel(accounts, en.accountId)}
@@ -1402,6 +1455,20 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                   }}
                 >
                   {en.hidden ? "Unhide" : "Hide"}
+                </button>
+                <button
+                  onClick={() => openSplitModal(en)}
+                  title="Split across categories"
+                  style={{
+                    background: "none",
+                    border: "none",
+                    cursor: "pointer",
+                    color: "#8B5E34",
+                    fontSize: 13,
+                    padding: 4,
+                  }}
+                >
+                  Split
                 </button>
                 <button
                   onClick={() => handleEdit(en)}
@@ -5838,6 +5905,19 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
             Your last change couldn't be saved. Check your connection and try
             again.
           </div>
+        )}
+
+        {splitEntry && (
+          <SplitTransactionModal
+            entry={splitEntry}
+            siblings={getSplitSiblings(entries, splitEntry)}
+            categories={catsForType(splitEntry.type)}
+            fmtMoney={fmtMoney}
+            fmtDateFull={fmtDateFull}
+            onApply={applySplitTransaction}
+            onUnsplit={splitEntry.splitGroupId ? unsplitTransaction : null}
+            onClose={() => setSplitEntry(null)}
+          />
         )}
 
         {periodReport && (
