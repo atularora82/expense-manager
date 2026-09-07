@@ -12,6 +12,8 @@ export default function DrillBar({
   labelWidth = 72,
   tooltip,
   fmtMoney,
+  secondaryAmount,
+  secondaryLabel = "avg/mo",
 }) {
   const [hovered, setHovered] = useState(false);
 
@@ -49,7 +51,22 @@ export default function DrillBar({
           }}
         />
       </div>
-      <div className="drill-bar-amount">{fmtMoney(total)}</div>
+      <div className="drill-bar-amount">
+        <div>{fmtMoney(total)}</div>
+        {secondaryAmount != null && secondaryAmount > 0 && (
+          <div
+            style={{
+              fontSize: 10,
+              color: "#A69C82",
+              marginTop: 2,
+              fontWeight: 500,
+              whiteSpace: "nowrap",
+            }}
+          >
+            {fmtMoney(secondaryAmount)} {secondaryLabel}
+          </div>
+        )}
+      </div>
     </button>
   );
 }

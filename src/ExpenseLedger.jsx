@@ -1620,6 +1620,39 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
     [yearCategoryMonthlyTotals]
   );
 
+  const yearCategoryMonthlyAverage = useMemo(() => {
+    if (!yearCategoryMonthlyTotals.length) return 0;
+    return yearCategoryYearTotal / yearCategoryMonthlyTotals.length;
+  }, [yearCategoryMonthlyTotals, yearCategoryYearTotal]);
+
+  const yearCategoryAverages = useMemo(() => {
+    if (periodMode !== "year" || globalSearchActive) return null;
+
+    function buildForType(entryType) {
+      const map = {};
+      for (const e of periodEntries) {
+        if (e.type !== entryType) continue;
+        const ym = e.date.slice(0, 7);
+        if (!map[e.category]) {
+          map[e.category] = { total: 0, months: new Set() };
+        }
+        map[e.category].total += e.amount;
+        map[e.category].months.add(ym);
+      }
+      const averages = {};
+      for (const [id, data] of Object.entries(map)) {
+        averages[id] = data.total / (data.months.size || 1);
+      }
+      return averages;
+    }
+
+    return {
+      expense: buildForType("expense"),
+      investment: buildForType("investment"),
+      income: buildForType("income"),
+    };
+  }, [periodEntries, periodMode, globalSearchActive]);
+
   const maxMonthlyTotal = monthlyExpenseTotals.length
     ? Math.max(...monthlyExpenseTotals.map((t) => t.total))
     : 1;
@@ -2801,7 +2834,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
         .drill-bar-amount {
           font-family: 'IBM Plex Mono', monospace;
           font-size: 12.5px;
-          width: 70px;
+          width: 88px;
           text-align: right;
           color: #1F2A22;
           flex-shrink: 0;
@@ -4367,6 +4400,9 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                   }}
                 >
                   {fmtMoney(yearCategoryYearTotal)} total
+                  {yearCategoryMonthlyAverage > 0 && (
+                    <> · {fmtMoney(yearCategoryMonthlyAverage)} avg/mo</>
+                  )}
                 </span>
               )}
             </div>
@@ -5321,6 +5357,19 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                     }}
                   >
                     Spending by category
+                    {periodMode === "year" && (
+                      <span
+                        style={{
+                          fontWeight: 400,
+                          textTransform: "none",
+                          letterSpacing: 0,
+                          marginLeft: 8,
+                          color: "#A69C82",
+                        }}
+                      >
+                        avg/mo across active months
+                      </span>
+                    )}
                   </div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                     {catTotals.map((c) => (
@@ -5334,6 +5383,11 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                         active={filterCat === c.id && filterType === "expense"}
                         onClick={() => drillToCategory(c.id, "expense")}
                         labelWidth={118}
+                        secondaryAmount={
+                          periodMode === "year"
+                            ? yearCategoryAverages?.expense?.[c.id]
+                            : undefined
+                        }
                         tooltip={{
                           title: c.label,
                           total: c.total,
@@ -5386,6 +5440,19 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                     }}
                   >
                     Investments by type
+                    {periodMode === "year" && (
+                      <span
+                        style={{
+                          fontWeight: 400,
+                          textTransform: "none",
+                          letterSpacing: 0,
+                          marginLeft: 8,
+                          color: "#A69C82",
+                        }}
+                      >
+                        avg/mo across active months
+                      </span>
+                    )}
                   </div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                     {investmentTotals.map((c) => (
@@ -5399,6 +5466,11 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                         active={filterCat === c.id && filterType === "investment"}
                         onClick={() => drillToCategory(c.id, "investment")}
                         labelWidth={118}
+                        secondaryAmount={
+                          periodMode === "year"
+                            ? yearCategoryAverages?.investment?.[c.id]
+                            : undefined
+                        }
                         tooltip={{
                           title: c.label,
                           total: c.total,
@@ -5452,6 +5524,19 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                     }}
                   >
                     Income by category
+                    {periodMode === "year" && (
+                      <span
+                        style={{
+                          fontWeight: 400,
+                          textTransform: "none",
+                          letterSpacing: 0,
+                          marginLeft: 8,
+                          color: "#A69C82",
+                        }}
+                      >
+                        avg/mo across active months
+                      </span>
+                    )}
                   </div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                     {incomeTotals.map((c) => (
@@ -5465,6 +5550,11 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                         active={filterCat === c.id && filterType === "income"}
                         onClick={() => drillToCategory(c.id, "income")}
                         labelWidth={118}
+                        secondaryAmount={
+                          periodMode === "year"
+                            ? yearCategoryAverages?.income?.[c.id]
+                            : undefined
+                        }
                         tooltip={{
                           title: c.label,
                           total: c.total,
