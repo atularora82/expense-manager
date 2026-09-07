@@ -468,6 +468,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
   const [month, setMonth] = useState(todayStr().slice(0, 7));
   const [weekAnchor, setWeekAnchor] = useState(todayStr());
   const [periodDrillDay, setPeriodDrillDay] = useState(null);
+  const [yearDrillMonth, setYearDrillMonth] = useState(null);
 
   const [filterType, setFilterType] = useState("all");
   const [filterCat, setFilterCat] = useState("all");
@@ -1100,8 +1101,11 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
     if (periodDrillDay) {
       list = list.filter((e) => e.date === periodDrillDay);
     }
+    if (periodMode === "year" && yearDrillMonth) {
+      list = list.filter((e) => e.date.slice(0, 7) === yearDrillMonth);
+    }
     return list;
-  }, [scopedEntries, periodMode, year, month, weekRange, periodDrillDay]);
+  }, [scopedEntries, periodMode, year, month, weekRange, periodDrillDay, yearDrillMonth]);
 
   const periodLabel = periodDrillDay
     ? fmtDateFull(periodDrillDay)
@@ -1114,12 +1118,14 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
   function switchPeriodMode(mode) {
     setPeriodMode(mode);
     setPeriodDrillDay(null);
+    setYearDrillMonth(null);
     setFilterCat("all");
   }
 
   function drillToYearView() {
     setPeriodMode("year");
     setPeriodDrillDay(null);
+    setYearDrillMonth(null);
     setFilterCat("all");
   }
 
@@ -1128,6 +1134,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
     setMonth(ym);
     setPeriodMode("month");
     setPeriodDrillDay(null);
+    setYearDrillMonth(null);
     setFilterCat("all");
   }
 
@@ -1135,6 +1142,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
     setWeekAnchor(dateStr);
     setPeriodMode("week");
     setPeriodDrillDay(null);
+    setYearDrillMonth(null);
     setFilterCat("all");
   }
 
@@ -1144,9 +1152,32 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
   }
 
   function drillToCategory(categoryId, type) {
+    const togglingOff = filterCat === categoryId && filterType === type;
+    const nextCat = togglingOff ? "all" : categoryId;
+    const nextType = togglingOff ? "all" : type;
+
+    if (periodMode === "year" && !periodDrillDay && activeTab === "overview") {
+      setFilterType(nextType);
+      setFilterCat(nextCat);
+      setYearDrillMonth(null);
+      if (nextCat !== "all") {
+        setShowExpenseDetails(true);
+        setShowInvestmentDetails(true);
+        setShowIncomeDetails(true);
+      }
+      return;
+    }
+
     setActiveTab("transactions");
-    setFilterType(type);
-    setFilterCat((prev) => (prev === categoryId ? "all" : categoryId));
+    setFilterType(nextType);
+    setFilterCat(nextCat);
+    setYearDrillMonth(null);
+  }
+
+  function drillToYearCategoryMonth(ym) {
+    setYearDrillMonth(ym);
+    setActiveTab("transactions");
+    setShowTransactions(true);
   }
 
   useEffect(() => {
@@ -1155,6 +1186,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
 
   function clearPeriodDrill() {
     setPeriodDrillDay(null);
+    setYearDrillMonth(null);
     setFilterCat("all");
   }
 
@@ -1537,7 +1569,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
   );
 
   const monthlyExpenseTotals = useMemo(() => {
-    if (periodMode !== "year") return [];
+    if (periodMode !== "year" || filterCat !== "all") return [];
     const totals = Array.from({ length: 12 }, (_, i) => {
       const ym = `${year}-${String(i + 1).padStart(2, "0")}`;
       const total = scopedEntries
@@ -1546,7 +1578,47 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
       return { ym, total, label: monthNameOnly(ym) };
     });
     return totals.filter((t) => t.total > 0);
-  }, [scopedEntries, year, periodMode]);
+  }, [scopedEntries, year, periodMode, filterCat]);
+
+  const yearCategoryEntryType =
+    filterType === "all" || filterType === "expense"
+      ? "expense"
+      : filterType === "investment"
+      ? "investment"
+      : "income";
+
+  const yearCategoryMonthlyTotals = useMemo(() => {
+    if (periodMode !== "year" || filterCat === "all" || globalSearchActive) return [];
+    const totals = Array.from({ length: 12 }, (_, i) => {
+      const ym = `${year}-${String(i + 1).padStart(2, "0")}`;
+      const total = scopedEntries
+        .filter(
+          (e) =>
+            e.type === yearCategoryEntryType &&
+            e.category === filterCat &&
+            e.date.slice(0, 7) === ym
+        )
+        .reduce((s, e) => s + e.amount, 0);
+      return { ym, total, label: monthNameOnly(ym) };
+    });
+    return totals.filter((t) => t.total > 0);
+  }, [
+    scopedEntries,
+    year,
+    periodMode,
+    filterCat,
+    globalSearchActive,
+    yearCategoryEntryType,
+  ]);
+
+  const maxYearCategoryMonthlyTotal = yearCategoryMonthlyTotals.length
+    ? Math.max(...yearCategoryMonthlyTotals.map((t) => t.total))
+    : 1;
+
+  const yearCategoryYearTotal = useMemo(
+    () => yearCategoryMonthlyTotals.reduce((sum, m) => sum + m.total, 0),
+    [yearCategoryMonthlyTotals]
+  );
 
   const maxMonthlyTotal = monthlyExpenseTotals.length
     ? Math.max(...monthlyExpenseTotals.map((t) => t.total))
@@ -1575,7 +1647,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
     : 1;
 
   const monthlyDrillTooltips = useMemo(() => {
-    if (periodMode !== "year" || globalSearchActive) return {};
+    if (periodMode !== "year" || globalSearchActive || filterCat !== "all") return {};
     const buckets = Array.from({ length: 12 }, (_, i) => {
       const ym = `${year}-${String(i + 1).padStart(2, "0")}`;
       return {
@@ -1591,7 +1663,40 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
       (entry, bucket) => entry.date.slice(0, 7) === bucket.id
     );
     return Object.fromEntries(tips.map((tip) => [tip.id, tip]));
-  }, [entries, year, periodMode, globalSearchActive]);
+  }, [entries, year, periodMode, globalSearchActive, filterCat]);
+
+  const yearCategoryMonthlyTooltips = useMemo(() => {
+    if (periodMode !== "year" || filterCat === "all" || globalSearchActive) return {};
+    const drillCatMap =
+      yearCategoryEntryType === "income"
+        ? incomeCatMap
+        : yearCategoryEntryType === "investment"
+        ? investmentCatMap
+        : catMap;
+    const buckets = Array.from({ length: 12 }, (_, i) => {
+      const ym = `${year}-${String(i + 1).padStart(2, "0")}`;
+      return {
+        id: ym,
+        title: formatBucketTooltipLabel({ key: ym, label: monthNameOnly(ym) }),
+      };
+    });
+    const tips = buildTimeDrillBarTooltips(
+      entries,
+      buckets,
+      drillCatMap,
+      yearCategoryEntryType,
+      (entry, bucket) =>
+        entry.date.slice(0, 7) === bucket.id && entry.category === filterCat
+    );
+    return Object.fromEntries(tips.map((tip) => [tip.id, tip]));
+  }, [
+    entries,
+    year,
+    periodMode,
+    filterCat,
+    globalSearchActive,
+    yearCategoryEntryType,
+  ]);
 
   const weeklyDrillTooltips = useMemo(() => {
     if (periodMode !== "month" || periodDrillDay || globalSearchActive) return {};
@@ -2453,6 +2558,120 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
       ? catInfoFor(filterType === "all" ? "expense" : filterType, filterCat)?.label
       : null;
 
+  const activeCategoryColor =
+    filterCat !== "all"
+      ? catInfoFor(filterType === "all" ? "expense" : filterType, filterCat)?.color ||
+        "#3C6E91"
+      : "#3C6E91";
+
+  function renderDrillBreadcrumbs() {
+    if (globalSearchActive) return null;
+    const showDrill =
+      periodDrillDay || filterCat !== "all" || (periodMode === "year" && yearDrillMonth);
+    if (!showDrill) return null;
+
+    return (
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          flexWrap: "wrap",
+          marginBottom: 16,
+          fontSize: 12.5,
+        }}
+      >
+        <span style={{ color: "#74836A", fontWeight: 600 }}>Drill-down:</span>
+        {periodMode === "year" && !periodDrillDay && (
+          <>
+            <button type="button" className="drill-crumb" onClick={drillToYearView}>
+              {year}
+            </button>
+            {filterCat !== "all" && (
+              <>
+                <span style={{ color: "#A69C82" }}>›</span>
+                <button
+                  type="button"
+                  className={`drill-crumb${yearDrillMonth ? "" : " drill-crumb-active"}`}
+                  onClick={() => {
+                    setYearDrillMonth(null);
+                    setActiveTab("overview");
+                  }}
+                >
+                  {activeCategoryLabel}
+                </button>
+              </>
+            )}
+            {yearDrillMonth && (
+              <>
+                <span style={{ color: "#A69C82" }}>›</span>
+                <button type="button" className="drill-crumb drill-crumb-active">
+                  {monthNameOnly(yearDrillMonth)}
+                </button>
+              </>
+            )}
+          </>
+        )}
+        {periodMode === "month" && (
+          <>
+            <button type="button" className="drill-crumb" onClick={drillToYearView}>
+              {year}
+            </button>
+            <span style={{ color: "#A69C82" }}>›</span>
+            <button
+              type="button"
+              className={`drill-crumb${periodDrillDay ? "" : " drill-crumb-active"}`}
+              onClick={() => drillToMonth(month)}
+            >
+              {monthNameOnly(month)}
+            </button>
+          </>
+        )}
+        {periodMode === "week" && (
+          <button
+            type="button"
+            className={`drill-crumb${periodDrillDay ? "" : " drill-crumb-active"}`}
+            onClick={() => {
+              if (periodDrillDay) setPeriodDrillDay(null);
+            }}
+          >
+            {weekLabel(weekRange)}
+          </button>
+        )}
+        {periodDrillDay && (
+          <>
+            {(periodMode === "month" || periodMode === "week") && (
+              <span style={{ color: "#A69C82" }}>›</span>
+            )}
+            <button type="button" className="drill-crumb drill-crumb-active">
+              {fmtDateFull(periodDrillDay)}
+            </button>
+          </>
+        )}
+        {activeCategoryLabel && periodMode !== "year" && (
+          <>
+            <span style={{ color: "#A69C82" }}>·</span>
+            <button
+              type="button"
+              className="drill-crumb drill-crumb-active"
+              onClick={() => setFilterCat("all")}
+            >
+              {activeCategoryLabel} ✕
+            </button>
+          </>
+        )}
+        <button
+          type="button"
+          className="drill-crumb"
+          style={{ color: "#3C6E91" }}
+          onClick={clearPeriodDrill}
+        >
+          Clear
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div
       style={{
@@ -2940,6 +3159,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
           toISODate={toISODate}
           setPeriodDrillDay={setPeriodDrillDay}
           setFilterCat={setFilterCat}
+          onClearDrill={clearPeriodDrill}
           onExportCSV={exportCSV}
           onPeriodReport={openPeriodReport}
           onBackup={exportBackup}
@@ -3816,6 +4036,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
             onChange={(e) => {
               setFilterType(e.target.value);
               setFilterCat("all");
+              setYearDrillMonth(null);
             }}
           >
             <option value="all">All entries</option>
@@ -3827,7 +4048,10 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
             className="ledger-select"
             style={{ width: "auto", minWidth: 160 }}
             value={filterCat}
-            onChange={(e) => setFilterCat(e.target.value)}
+            onChange={(e) => {
+              setFilterCat(e.target.value);
+              setYearDrillMonth(null);
+            }}
           >
             <option value="all">All categories</option>
             {categoryFilterOptions ? (
@@ -3996,81 +4220,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
           </div>
         )}
 
-        {!globalSearchActive && (periodDrillDay || filterCat !== "all") && (
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              flexWrap: "wrap",
-              marginBottom: 16,
-              fontSize: 12.5,
-            }}
-          >
-            <span style={{ color: "#74836A", fontWeight: 600 }}>Drill-down:</span>
-            {periodMode === "year" && !periodDrillDay && (
-              <button type="button" className="drill-crumb" onClick={drillToYearView}>
-                {year}
-              </button>
-            )}
-            {periodMode === "month" && (
-              <>
-                <button type="button" className="drill-crumb" onClick={drillToYearView}>
-                  {year}
-                </button>
-                <span style={{ color: "#A69C82" }}>›</span>
-                <button
-                  type="button"
-                  className={`drill-crumb${periodDrillDay ? "" : " drill-crumb-active"}`}
-                  onClick={() => drillToMonth(month)}
-                >
-                  {monthNameOnly(month)}
-                </button>
-              </>
-            )}
-            {periodMode === "week" && (
-              <button
-                type="button"
-                className={`drill-crumb${periodDrillDay ? "" : " drill-crumb-active"}`}
-                onClick={() => {
-                  if (periodDrillDay) setPeriodDrillDay(null);
-                }}
-              >
-                {weekLabel(weekRange)}
-              </button>
-            )}
-            {periodDrillDay && (
-              <>
-                {(periodMode === "month" || periodMode === "week") && (
-                  <span style={{ color: "#A69C82" }}>›</span>
-                )}
-                <button type="button" className="drill-crumb drill-crumb-active">
-                  {fmtDateFull(periodDrillDay)}
-                </button>
-              </>
-            )}
-            {activeCategoryLabel && (
-              <>
-                <span style={{ color: "#A69C82" }}>·</span>
-                <button
-                  type="button"
-                  className="drill-crumb drill-crumb-active"
-                  onClick={() => setFilterCat("all")}
-                >
-                  {activeCategoryLabel} ✕
-                </button>
-              </>
-            )}
-            <button
-              type="button"
-              className="drill-crumb"
-              style={{ color: "#3C6E91" }}
-              onClick={clearPeriodDrill}
-            >
-              Clear
-            </button>
-          </div>
-        )}
+        {!globalSearchActive && renderDrillBreadcrumbs()}
 
         {globalSearchActive && (
           <div
@@ -4158,9 +4308,10 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
 
         {activeTab === "overview" && !globalSearchActive && (
           <>
+        {renderDrillBreadcrumbs()}
+
         {!globalSearchActive &&
           !periodDrillDay &&
-          filterCat === "all" &&
           (periodMode === "year" ||
             periodMode === "month" ||
             periodMode === "week") && (
@@ -4174,13 +4325,75 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
             >
               Click a bar below to drill down
               {periodMode === "year"
-                ? " to a month"
+                ? filterCat !== "all"
+                  ? " to a month for this category"
+                  : " to a month or category"
                 : periodMode === "month"
                 ? " to a week or category"
                 : " to a day or category"}
               .
             </div>
           )}
+
+        {periodMode === "year" && filterCat !== "all" && (
+          <div
+            style={{
+              border: "1px solid #D8CDB4",
+              borderRadius: 8,
+              background: "#FFFDF8",
+              padding: "14px 16px",
+              marginBottom: 20,
+            }}
+          >
+            <div
+              style={{
+                fontSize: 11,
+                fontWeight: 600,
+                letterSpacing: "0.1em",
+                textTransform: "uppercase",
+                color: "#74836A",
+                marginBottom: 10,
+              }}
+            >
+              {activeCategoryLabel} by month &mdash; {year}
+              {yearCategoryYearTotal > 0 && (
+                <span
+                  style={{
+                    fontWeight: 400,
+                    textTransform: "none",
+                    letterSpacing: 0,
+                    marginLeft: 8,
+                    color: "#A69C82",
+                  }}
+                >
+                  {fmtMoney(yearCategoryYearTotal)} total
+                </span>
+              )}
+            </div>
+            {yearCategoryMonthlyTotals.length > 0 ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                {yearCategoryMonthlyTotals.map((m) => (
+                  <DrillBar
+                    key={m.ym}
+                    id={m.ym}
+                    label={m.label}
+                    total={m.total}
+                    maxTotal={maxYearCategoryMonthlyTotal}
+                    color={activeCategoryColor}
+                    active={yearDrillMonth === m.ym}
+                    onClick={() => drillToYearCategoryMonth(m.ym)}
+                    tooltip={yearCategoryMonthlyTooltips[m.ym]}
+                    fmtMoney={fmtMoney}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div style={{ fontSize: 12.5, color: "#74836A" }}>
+                No {yearCategoryEntryType} entries for {activeCategoryLabel} in {year}.
+              </div>
+            )}
+          </div>
+        )}
 
         {periodMode === "month" && (
           <MonthlyAllocationPanel

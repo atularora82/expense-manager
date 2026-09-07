@@ -18,6 +18,7 @@ export default function LedgerPeriodBar({
   toISODate,
   setPeriodDrillDay,
   setFilterCat,
+  onClearDrill,
   onExportCSV,
   onPeriodReport,
   onBackup,
@@ -41,6 +42,10 @@ export default function LedgerPeriodBar({
   }, [menuOpen]);
 
   function clearDrill() {
+    if (onClearDrill) {
+      onClearDrill();
+      return;
+    }
     setPeriodDrillDay(null);
     setFilterCat("all");
   }
