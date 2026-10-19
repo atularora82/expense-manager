@@ -88,9 +88,7 @@ export const STATEMENT_MAP_FIELDS = [
   { id: "amount", label: "Amount (single column)", required: false },
 ];
 
-export async function readStatementFile(file) {
-  const buffer = await file.arrayBuffer();
-  const workbook = XLSX.read(buffer, { type: "array", cellDates: false });
+function readStatementWorkbook(workbook, fileName) {
   const sheetName = workbook.SheetNames[0];
   if (!sheetName) {
     throw new Error("The file has no worksheets.");
@@ -102,7 +100,22 @@ export async function readStatementFile(file) {
   });
   const columns = rows.length > 0 ? Object.keys(rows[0]) : [];
 
-  return { columns, rows, fileName: file.name };
+  return { columns, rows, fileName };
+}
+
+export async function readStatementFile(file) {
+  const buffer = await file.arrayBuffer();
+  const workbook = XLSX.read(buffer, { type: "array", cellDates: false });
+  return readStatementWorkbook(workbook, file.name);
+}
+
+export function readStatementFromText(text, fileName = "pasted.csv") {
+  const trimmed = String(text ?? "").trim();
+  if (!trimmed) {
+    throw new Error("Paste your CSV data first.");
+  }
+  const workbook = XLSX.read(trimmed, { type: "string", cellDates: false });
+  return readStatementWorkbook(workbook, fileName);
 }
 
 export function resolveStatementProfile(savedProfiles, columns) {

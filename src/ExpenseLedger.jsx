@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import { parseExcelFile } from "./excelImport.js";
 import {
   readStatementFile,
+  readStatementFromText,
   resolveColumnMapping,
   columnSignature,
   parseStatementWithMapping,
@@ -493,6 +494,8 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
   const [statementProfiles, setStatementProfiles] = useState({});
   const [profilesLoaded, setProfilesLoaded] = useState(false);
   const [statementDragActive, setStatementDragActive] = useState(false);
+  const [statementPasteOpen, setStatementPasteOpen] = useState(false);
+  const [statementPasteText, setStatementPasteText] = useState("");
   const [showManualEntry, setShowManualEntry] = useState(false);
   const [backupNote, setBackupNote] = useState("");
   const [backupSchedule, setBackupSchedule] = useState(() => normalizeBackupSchedule());
@@ -2157,29 +2160,46 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
     });
   }
 
+  function openStatementImport({ columns, rows, fileName }) {
+    if (rows.length === 0) {
+      setImportNote("Statement is empty.");
+      return;
+    }
+    const profile = resolveStatementProfile(statementProfiles, columns);
+    setStatementImport({
+      fileName,
+      columns,
+      rows,
+      mapping: profile.mapping,
+      dateFormat: profile.dateFormat,
+      mappingRemembered:
+        profilesLoaded &&
+        Boolean(statementProfiles[columnSignature(columns)]),
+    });
+  }
+
   async function processStatementFile(file) {
     if (!file) return;
 
     setImportNote("");
     try {
-      const { columns, rows, fileName } = await readStatementFile(file);
-      if (rows.length === 0) {
-        setImportNote("Statement file is empty.");
-        return;
-      }
-      const profile = resolveStatementProfile(statementProfiles, columns);
-      setStatementImport({
-        fileName,
-        columns,
-        rows,
-        mapping: profile.mapping,
-        dateFormat: profile.dateFormat,
-        mappingRemembered:
-          profilesLoaded &&
-          Boolean(statementProfiles[columnSignature(columns)]),
-      });
+      const parsed = await readStatementFile(file);
+      openStatementImport(parsed);
     } catch (err) {
       setImportNote(err.message || "Could not read the statement file.");
+      console.error(err);
+    }
+  }
+
+  function handleStatementPasteSubmit() {
+    setImportNote("");
+    try {
+      const parsed = readStatementFromText(statementPasteText);
+      setStatementPasteOpen(false);
+      setStatementPasteText("");
+      openStatementImport(parsed);
+    } catch (err) {
+      setImportNote(err.message || "Could not parse the pasted CSV.");
       console.error(err);
     }
   }
@@ -3393,6 +3413,22 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
               </button>
               <button
                 type="button"
+                className="ledger-btn ledger-btn-ghost"
+                style={{
+                  textTransform: "none",
+                  letterSpacing: "normal",
+                  fontWeight: 600,
+                  padding: "12px 20px",
+                }}
+                onClick={() => {
+                  setStatementPasteText("");
+                  setStatementPasteOpen(true);
+                }}
+              >
+                Paste CSV
+              </button>
+              <button
+                type="button"
                 onClick={() => importInputRef.current?.click()}
                 style={{
                   background: "none",
@@ -3417,7 +3453,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
           >
             {statementDragActive
               ? "Drop your statement file here"
-              : "Or drag and drop a .csv, .xlsx, or .xls file"}
+              : "Or drag and drop a file, or paste CSV values directly"}
           </div>
         </div>
 
@@ -4375,7 +4411,15 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
               ? "No transactions yet. Import your bank statement to populate the ledger."
               : "No entries for this period or filter."}
             {!globalSearchActive && entries.length === 0 && (
-              <div style={{ marginTop: 16 }}>
+              <div
+                style={{
+                  marginTop: 16,
+                  display: "flex",
+                  gap: 10,
+                  justifyContent: "center",
+                  flexWrap: "wrap",
+                }}
+              >
                 <button
                   type="button"
                   className="ledger-btn"
@@ -4387,6 +4431,21 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                   onClick={() => statementInputRef.current?.click()}
                 >
                   Choose statement file
+                </button>
+                <button
+                  type="button"
+                  className="ledger-btn ledger-btn-ghost"
+                  style={{
+                    textTransform: "none",
+                    letterSpacing: "normal",
+                    fontWeight: 600,
+                  }}
+                  onClick={() => {
+                    setStatementPasteText("");
+                    setStatementPasteOpen(true);
+                  }}
+                >
+                  Paste CSV
                 </button>
               </div>
             )}
@@ -4543,6 +4602,68 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
         )}
 
           </>
+        )}
+
+        {statementPasteOpen && (
+          <div
+            className="ledger-modal-backdrop"
+            onClick={() => setStatementPasteOpen(false)}
+          >
+            <div
+              className="ledger-modal"
+              style={{ maxWidth: 560 }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div
+                style={{
+                  fontFamily: "'Fraunces', serif",
+                  fontSize: 18,
+                  fontWeight: 600,
+                  marginBottom: 8,
+                }}
+              >
+                Paste bank statement CSV
+              </div>
+              <div style={{ fontSize: 13, color: "#74836A", marginBottom: 14 }}>
+                Copy rows from your bank&apos;s CSV export (including the header row)
+                and paste them below. You&apos;ll map columns on the next step, same as
+                for a file upload.
+              </div>
+              <textarea
+                className="ledger-input"
+                value={statementPasteText}
+                onChange={(e) => setStatementPasteText(e.target.value)}
+                placeholder={`Date,Description,Debit,Credit\n01/04/2025,UPI-SWIGGY,450,\n02/04/2025,SALARY,,50000`}
+                rows={12}
+                style={{
+                  width: "100%",
+                  resize: "vertical",
+                  fontFamily: "ui-monospace, monospace",
+                  fontSize: 12.5,
+                  lineHeight: 1.45,
+                  boxSizing: "border-box",
+                }}
+                autoFocus
+              />
+              <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
+                <button
+                  type="button"
+                  className="ledger-btn"
+                  onClick={handleStatementPasteSubmit}
+                  disabled={!statementPasteText.trim()}
+                >
+                  Continue
+                </button>
+                <button
+                  type="button"
+                  className="ledger-btn ledger-btn-ghost"
+                  onClick={() => setStatementPasteOpen(false)}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
         )}
 
         {statementImport && (
