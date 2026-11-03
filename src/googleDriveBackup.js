@@ -204,13 +204,13 @@ async function pruneOldBackups(accessToken, folderId, keep = KEEP_BACKUP_COUNT) 
   );
 }
 
-export async function runGoogleDriveBackup({
+async function runGoogleDriveBackupWithToken({
   auth,
   googleProvider,
   backup,
   schedule,
-  forceAuth = false,
-  interactive = true,
+  forceAuth,
+  interactive,
 }) {
   const accessToken = await getGoogleDriveAccessToken(auth, googleProvider, {
     forceRefresh: forceAuth,
@@ -220,4 +220,41 @@ export async function runGoogleDriveBackup({
   const uploaded = await uploadBackupToDrive(accessToken, folderId, backup);
   await pruneOldBackups(accessToken, folderId);
   return { folderId, uploaded };
+}
+
+export async function runGoogleDriveBackup({
+  auth,
+  googleProvider,
+  backup,
+  schedule,
+  forceAuth = false,
+  interactive = true,
+  allowInteractiveFallback = false,
+}) {
+  try {
+    return await runGoogleDriveBackupWithToken({
+      auth,
+      googleProvider,
+      backup,
+      schedule,
+      forceAuth,
+      interactive,
+    });
+  } catch (err) {
+    if (
+      allowInteractiveFallback &&
+      !interactive &&
+      err?.code === "drive/auth-required"
+    ) {
+      return runGoogleDriveBackupWithToken({
+        auth,
+        googleProvider,
+        backup,
+        schedule,
+        forceAuth: true,
+        interactive: true,
+      });
+    }
+    throw err;
+  }
 }

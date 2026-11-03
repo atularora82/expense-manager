@@ -32,17 +32,25 @@ import {
   shouldRunScheduledBackup,
   formatLastBackup,
   markBackupCompleted,
+  getLocalDateKey,
 } from "./backupSchedule.js";
 import {
   runGoogleDriveBackup,
   userHasGoogleProvider,
 } from "./googleDriveBackup.js";
 import { auth, googleProvider } from "./firebase.js";
+import ReleaseNotesPanel from "./ReleaseNotesPanel.jsx";
+import { APP_VERSION } from "./version.js";
 import {
   INVESTMENT_CATEGORIES,
   investmentCatMap,
   detectInvestmentCategory,
 } from "./investments.js";
+import {
+  INCOME_CATEGORIES,
+  incomeCatMap,
+  detectIncomeCategory,
+} from "./income.js";
 import {
   buildCumulativeChartBundle,
   buildTimeDrillBarTooltips,
@@ -128,23 +136,14 @@ const CATEGORIES = [
   { id: "education", label: "Education", color: "#4A5A91" },
   { id: "travel", label: "Travel", color: "#3E8C8C" },
   { id: "personal", label: "Personal Care", color: "#A67C52" },
+  { id: "insurance", label: "Insurance", color: "#5A7A9E" },
+  { id: "gifts_donations", label: "Gifts & Donations", color: "#9B6B88" },
+  { id: "taxes", label: "Taxes & Fees", color: "#6B6560" },
+  { id: "debt", label: "Debt Repayment", color: "#8C4A4A" },
   { id: "other", label: "Other", color: "#74836A" },
 ];
 
-const INCOME_CATEGORIES = [
-  { id: "salary", label: "Salary", color: "#2F6B4F" },
-  { id: "freelance", label: "Freelance", color: "#3C6E91" },
-  { id: "business", label: "Business", color: "#8B5E34" },
-  { id: "investment", label: "Investment", color: "#4A5A91" },
-  { id: "gift", label: "Gift", color: "#B15E86" },
-  { id: "refund", label: "Refund / Cashback", color: "#74836A" },
-  { id: "other_income", label: "Other income", color: "#C08A28" },
-];
-
 const catMap = Object.fromEntries(CATEGORIES.map((c) => [c.id, c]));
-const incomeCatMap = Object.fromEntries(
-  INCOME_CATEGORIES.map((c) => [c.id, c])
-);
 
 function catsForType(type) {
   if (type === "income") return INCOME_CATEGORIES;
@@ -306,7 +305,7 @@ function getDailyExpenseTotals(sourceEntries, startStr, endStr) {
 const EXPENSE_KEYWORDS = {
   food: ["food", "restaurant", "lunch", "dinner", "breakfast", "coffee", "tea", "snack", "swiggy", "zomato", "dine", "cafe"],
   groceries: ["grocery", "groceries", "vegetable", "vegetables", "supermarket", "bigbasket", "kirana", "milk", "fruits"],
-  transport: ["uber", "ola", "taxi", "auto", "rickshaw", "bus", "train ticket", "metro", "fuel", "petrol", "diesel", "cab", "toll", "parking"],
+  transport: ["uber", "ola", "taxi", "auto", "rickshaw", "bus", "train ticket", "metro", "fuel", "petrol", "diesel", "cab", "toll", "parking", "fastag"],
   housing: ["rent", "maintenance", "housing", "society", "home loan", "homeloan", "housing loan", "hl emi", "mortgage", "property loan", "lap emi"],
   utilities: ["electricity", "electric bill", "water bill", "wifi", "internet", "recharge", "mobile bill", "gas cylinder", "broadband", "dth"],
   entertainment: ["movie", "netflix", "entertainment", "concert", "game", "cinema", "bookmyshow", "subscription", "spotify", "prime video"],
@@ -315,26 +314,58 @@ const EXPENSE_KEYWORDS = {
   education: ["book", "course", "tuition", "fees", "school", "college", "class", "exam"],
   travel: ["flight", "hotel booking", "travel", "trip", "vacation", "irctc", "makemytrip", "holiday"],
   personal: ["salon", "haircut", "spa", "parlour", "personal care", "cosmetics"],
-};
-
-const INCOME_KEYWORDS = {
-  salary: ["salary", "paycheck", "pay check", "stipend"],
-  freelance: ["freelance", "client payment", "project payment", "gig"],
-  business: ["business income", "sales", "revenue"],
-  investment: ["dividend", "interest", "mutual fund", "stocks", "shares", "investment return"],
-  gift: ["gift", "gifted", "birthday money"],
-  refund: ["refund", "cashback", "reimbursement"],
+  insurance: [
+    "health insurance",
+    "mediclaim",
+    "motor insurance",
+    "car insurance",
+    "bike insurance",
+    "term insurance",
+    "insurance premium",
+    "policy premium",
+    "renewal premium",
+  ],
+  gifts_donations: [
+    "donation",
+    "charity",
+    "temple",
+    "church",
+    "mosque",
+    "ngo",
+    "gift",
+    "wedding gift",
+    "birthday gift",
+    "festival gift",
+  ],
+  taxes: [
+    "income tax",
+    "advance tax",
+    "property tax",
+    "professional tax",
+    "gst payment",
+    "challan",
+    "tds",
+  ],
+  debt: [
+    "personal loan",
+    "pl emi",
+    "credit card payment",
+    "card payment",
+    "loan repayment",
+    "loan emi",
+    "nbfc",
+    "bajaj finance",
+  ],
 };
 
 function detectCategory(lowerText, type) {
   if (type === "investment") return detectInvestmentCategory(lowerText);
-  const list = catsForType(type);
-  const keywords = type === "income" ? INCOME_KEYWORDS : EXPENSE_KEYWORDS;
-  for (const cat of list) {
-    const words = keywords[cat.id];
+  if (type === "income") return detectIncomeCategory(lowerText);
+  for (const cat of CATEGORIES) {
+    const words = EXPENSE_KEYWORDS[cat.id];
     if (words && words.some((w) => lowerText.includes(w))) return cat.id;
   }
-  return type === "income" ? "other_income" : "other";
+  return "other";
 }
 
 function resolveCategory(description, type, rules = {}) {
@@ -502,7 +533,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
   const [backupScheduleLoaded, setBackupScheduleLoaded] = useState(false);
   const [driveBackupBusy, setDriveBackupBusy] = useState(false);
   const [showDriveBackup, setShowDriveBackup] = useState(false);
-  const driveBackupRanRef = useRef(false);
+  const scheduledBackupDayRef = useRef(null);
   const [activeTab, setActiveTab] = useState("overview");
   const [showRecurring, setShowRecurring] = useState(false);
   const [showTransactions, setShowTransactions] = useState(true);
@@ -515,6 +546,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
   const [showIncomeDetails, setShowIncomeDetails] = useState(false);
   const [showSavingTips, setShowSavingTips] = useState(true);
   const [showAccounts, setShowAccounts] = useState(false);
+  const [showAbout, setShowAbout] = useState(true);
   const [showSavingsGoals, setShowSavingsGoals] = useState(true);
   const [periodReport, setPeriodReport] = useState(null);
   const [splitEntry, setSplitEntry] = useState(null);
@@ -2501,7 +2533,11 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
     setBackupNote("Full backup downloaded.");
   }
 
-  async function runDriveBackup({ manual = false, forceAuth = false } = {}) {
+  async function runDriveBackup({
+    manual = false,
+    forceAuth = false,
+    scheduled = false,
+  } = {}) {
     if (!cloudSync || !userHasGoogleProvider(user)) {
       setBackupNote("Sign in with Google to back up to Drive.");
       return false;
@@ -2519,6 +2555,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
         schedule: backupSchedule,
         forceAuth,
         interactive,
+        allowInteractiveFallback: scheduled && !interactive,
       });
       const nextSchedule = markBackupCompleted({
         ...backupSchedule,
@@ -2538,7 +2575,9 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
         setBackupNote(message);
         console.error(err);
       } else if (authRequired) {
-        // Token expired — skip silently; user can re-auth via manual backup.
+        setBackupNote(
+          "Scheduled backup needs Google Drive access. Use “Backup to Drive now” to sign in, or allow the prompt when due."
+        );
       } else {
         setBackupNote(`Scheduled backup skipped: ${message}`);
         console.warn(err);
@@ -2570,13 +2609,23 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
     ) {
       return;
     }
-    if (!shouldRunScheduledBackup(backupSchedule)) return;
-    if (driveBackupRanRef.current) return;
 
-    driveBackupRanRef.current = true;
-    runDriveBackup({ manual: false }).then((ok) => {
-      if (!ok) driveBackupRanRef.current = false;
-    });
+    const SCHEDULED_CHECK_MS = 30 * 60 * 1000;
+
+    function tryScheduledBackup() {
+      if (!shouldRunScheduledBackup(backupSchedule)) return;
+      const todayKey = getLocalDateKey();
+      if (scheduledBackupDayRef.current === todayKey) return;
+
+      scheduledBackupDayRef.current = todayKey;
+      runDriveBackup({ manual: false, scheduled: true }).then((ok) => {
+        if (!ok) scheduledBackupDayRef.current = null;
+      });
+    }
+
+    tryScheduledBackup();
+    const timer = setInterval(tryScheduledBackup, SCHEDULED_CHECK_MS);
+    return () => clearInterval(timer);
   }, [
     storageHydrated,
     backupScheduleLoaded,
@@ -2603,7 +2652,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
       setAccounts(normalizeAccounts(data.accounts));
       setSavingsGoals(normalizeSavingsGoals(data.savingsGoals));
       setBackupNote(
-        `Restored backup from ${data.exportedAt ? data.exportedAt.slice(0, 10) : "file"} (${data.entries.length} entries).`
+        `Restored backup from ${data.exportedAt ? data.exportedAt.slice(0, 10) : "file"} (${data.entries.length} entries${data.appVersion ? `, app v${data.appVersion}` : ""}).`
       );
     } catch (err) {
       setBackupNote(err.message || "Restore failed.");
@@ -3104,6 +3153,9 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                 {user.email}
               </div>
             )}
+            <div style={{ fontSize: 11.5, color: "#A8B5A0", marginTop: 6 }}>
+              v{APP_VERSION}
+            </div>
           </div>
 
           <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
@@ -5781,6 +5833,10 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
               </div>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                <div style={{ fontSize: 12.5, color: "#74836A", lineHeight: 1.5 }}>
+                  Scheduled backups run while this app is open (not in the background).
+                  Daily means once per calendar day; weekly means once per week (Mon–Sun).
+                </div>
                 <label
                   style={{
                     display: "flex",
@@ -6001,6 +6057,15 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
             )}
           </CollapsiblePanel>
         )}
+
+        <CollapsiblePanel
+          title="About & releases"
+          meta={`Version ${APP_VERSION}`}
+          open={showAbout}
+          onToggle={() => setShowAbout((v) => !v)}
+        >
+          <ReleaseNotesPanel />
+        </CollapsiblePanel>
 
           </>
         )}

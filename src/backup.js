@@ -1,3 +1,5 @@
+import { APP_VERSION } from "./version.js";
+
 export const BACKUP_VERSION = 2;
 
 export function createBackup({
@@ -10,6 +12,7 @@ export function createBackup({
 }) {
   return {
     version: BACKUP_VERSION,
+    appVersion: APP_VERSION,
     exportedAt: new Date().toISOString(),
     entries,
     budgets,
@@ -30,6 +33,7 @@ export function parseBackupFile(text) {
   }
   return {
     version: data.version ?? 0,
+    appVersion: data.appVersion ?? null,
     exportedAt: data.exportedAt ?? null,
     entries: data.entries,
     budgets: data.budgets && typeof data.budgets === "object" ? data.budgets : {},

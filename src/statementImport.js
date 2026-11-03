@@ -1,5 +1,6 @@
 import * as XLSX from "xlsx";
 import { lookupCategoryRule } from "./categoryRules.js";
+import { detectIncomeCategory } from "./income.js";
 import { parseAmount, mapExcelCategory } from "./excelImport.js";
 import { parseDateWithFormat } from "./dateParse.js";
 
@@ -64,7 +65,9 @@ function normalizeKey(key) {
 }
 
 function resolveIncomeCategory(description, categoryRules) {
-  return lookupCategoryRule(categoryRules, description, "income") || "other_income";
+  const fromRule = lookupCategoryRule(categoryRules, description, "income");
+  if (fromRule) return fromRule;
+  return detectIncomeCategory(String(description || "").toLowerCase());
 }
 
 function shouldSkipDescription(text) {

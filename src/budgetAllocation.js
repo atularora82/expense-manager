@@ -38,11 +38,15 @@ export const CATEGORY_ALLOCATION = {
   transport: { bucket: "needs", weight: 0.14 },
   health: { bucket: "needs", weight: 0.1 },
   education: { bucket: "needs", weight: 0.06 },
+  insurance: { bucket: "needs", weight: 0.08 },
+  taxes: { bucket: "needs", weight: 0.05 },
+  debt: { bucket: "needs", weight: 0.06 },
   food: { bucket: "wants", weight: 0.22 },
   entertainment: { bucket: "wants", weight: 0.18 },
   shopping: { bucket: "wants", weight: 0.2 },
   travel: { bucket: "wants", weight: 0.15 },
   personal: { bucket: "wants", weight: 0.12 },
+  gifts_donations: { bucket: "wants", weight: 0.08 },
   other: { bucket: "wants", weight: 0.13 },
 };
 
