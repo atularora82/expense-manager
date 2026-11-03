@@ -34,7 +34,7 @@ export default function PeriodReportModal({ report, onClose, onPrint }) {
           >
             Period report
           </div>
-          <div style={{ fontSize: 13, color: "#74836A", marginBottom: 20 }}>
+          <div style={{ fontSize: 13, color: "var(--ledger-muted)", marginBottom: 20 }}>
             {report.periodLabel} &middot; Generated{" "}
             {new Date(report.generatedAt).toLocaleDateString("en-IN", {
               day: "numeric",
@@ -60,13 +60,13 @@ export default function PeriodReportModal({ report, onClose, onPrint }) {
               <div
                 key={item.label}
                 style={{
-                  border: "1px solid #E4DCC5",
+                  border: "1px solid var(--ledger-border-light)",
                   borderRadius: 6,
                   padding: "10px 12px",
-                  background: "#FFFDF8",
+                  background: "var(--ledger-surface)",
                 }}
               >
-                <div style={{ fontSize: 11, color: "#74836A", fontWeight: 600, textTransform: "uppercase" }}>
+                <div style={{ fontSize: 11, color: "var(--ledger-muted)", fontWeight: 600, textTransform: "uppercase" }}>
                   {item.label}
                 </div>
                 <div
@@ -85,7 +85,7 @@ export default function PeriodReportModal({ report, onClose, onPrint }) {
           </div>
 
           {report.savingsRate != null && (
-            <div style={{ fontSize: 13, color: "#4A5A4E", marginBottom: 20 }}>
+            <div style={{ fontSize: 13, color: "var(--ledger-text-secondary)", marginBottom: 20 }}>
               Savings rate: <strong>{formatReportPct(report.savingsRate)}</strong> of income
               &middot; {report.entryCount} transaction{report.entryCount === 1 ? "" : "s"}
             </div>
@@ -160,13 +160,13 @@ function Section({ title, children }) {
           fontWeight: 600,
           letterSpacing: "0.1em",
           textTransform: "uppercase",
-          color: "#74836A",
+          color: "var(--ledger-muted)",
           marginBottom: 8,
         }}
       >
         {title}
       </div>
-      <div style={{ border: "1px solid #E4DCC5", borderRadius: 6, overflow: "hidden" }}>
+      <div style={{ border: "1px solid var(--ledger-border-light)", borderRadius: 6, overflow: "hidden" }}>
         {children}
       </div>
     </div>
@@ -181,19 +181,19 @@ function Row({ label, sub, value, accent }) {
         justifyContent: "space-between",
         gap: 12,
         padding: "9px 12px",
-        borderTop: "1px dashed #E4DCC5",
+        borderTop: "1px dashed var(--ledger-border-light)",
         fontSize: 12.5,
       }}
     >
       <div style={{ minWidth: 0 }}>
-        <div style={{ color: accent || "#1F2A22" }}>{label}</div>
-        {sub && <div style={{ fontSize: 11, color: "#74836A", marginTop: 2 }}>{sub}</div>}
+        <div style={{ color: accent || "var(--ledger-text)" }}>{label}</div>
+        {sub && <div style={{ fontSize: 11, color: "var(--ledger-muted)", marginTop: 2 }}>{sub}</div>}
       </div>
       <div
         style={{
           fontFamily: "'IBM Plex Mono', monospace",
           fontWeight: 600,
-          color: accent || "#1F2A22",
+          color: accent || "var(--ledger-text)",
           flexShrink: 0,
         }}
       >

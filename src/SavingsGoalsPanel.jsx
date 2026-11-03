@@ -31,7 +31,7 @@ export default function SavingsGoalsPanel({ goals, onAdd, onUpdate, onRemove }) 
   return (
     <div>
       {goals.length === 0 ? (
-        <div style={{ fontSize: 13, color: "#74836A", marginBottom: 14 }}>
+        <div style={{ fontSize: 13, color: "var(--ledger-muted)", marginBottom: 14 }}>
           Set a savings target — emergency fund, vacation, or a big purchase.
         </div>
       ) : (
@@ -44,10 +44,10 @@ export default function SavingsGoalsPanel({ goals, onAdd, onUpdate, onRemove }) 
               <div
                 key={goal.id}
                 style={{
-                  border: "1px solid #D8CDB4",
+                  border: "1px solid var(--ledger-border)",
                   borderRadius: 6,
                   padding: "12px 14px",
-                  background: "#FFFDF8",
+                  background: "var(--ledger-surface)",
                 }}
               >
                 <div
@@ -60,10 +60,10 @@ export default function SavingsGoalsPanel({ goals, onAdd, onUpdate, onRemove }) 
                   }}
                 >
                   <div>
-                    <div style={{ fontSize: 14, fontWeight: 600, color: "#1F2A22" }}>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: "var(--ledger-text)" }}>
                       {goal.name}
                     </div>
-                    <div style={{ fontSize: 12, color: "#74836A", marginTop: 2 }}>
+                    <div style={{ fontSize: 12, color: "var(--ledger-muted)", marginTop: 2 }}>
                       {fmtMoney(goal.currentAmount)} of {fmtMoney(goal.targetAmount)}
                       {goal.targetDate && days != null && (
                         <span>
@@ -89,7 +89,7 @@ export default function SavingsGoalsPanel({ goals, onAdd, onUpdate, onRemove }) 
                 </div>
                 <div
                   style={{
-                    background: "#EDE6D6",
+                    background: "var(--ledger-fill)",
                     height: 8,
                     borderRadius: 4,
                     overflow: "hidden",
@@ -105,7 +105,7 @@ export default function SavingsGoalsPanel({ goals, onAdd, onUpdate, onRemove }) 
                   />
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                  <span style={{ fontSize: 12, color: "#74836A" }}>
+                  <span style={{ fontSize: 12, color: "var(--ledger-muted)" }}>
                     {pct}% &middot; {fmtMoney(remaining)} to go
                   </span>
                   <input
@@ -125,7 +125,7 @@ export default function SavingsGoalsPanel({ goals, onAdd, onUpdate, onRemove }) 
                       }
                     }}
                   />
-                  <span style={{ fontSize: 11, color: "#A69C82" }}>Enter to save</span>
+                  <span style={{ fontSize: 11, color: "var(--ledger-text-tertiary)" }}>Enter to save</span>
                 </div>
               </div>
             );
@@ -183,7 +183,7 @@ export default function SavingsGoalsPanel({ goals, onAdd, onUpdate, onRemove }) 
 const labelStyle = {
   fontSize: 11,
   fontWeight: 600,
-  color: "#74836A",
+  color: "var(--ledger-muted)",
   textTransform: "uppercase",
   letterSpacing: "0.06em",
   display: "block",

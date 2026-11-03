@@ -11,8 +11,8 @@ export default function ChartTooltip({ tooltip, style }) {
       style={{
         minWidth: 210,
         maxWidth: 280,
-        background: "#1F2A22",
-        color: "#FFFDF8",
+        background: "var(--ledger-tooltip-bg)",
+        color: "var(--ledger-tooltip-text)",
         borderRadius: 8,
         padding: "10px 12px",
         boxShadow: "0 8px 24px rgba(31,42,34,0.18)",
@@ -28,7 +28,7 @@ export default function ChartTooltip({ tooltip, style }) {
           fontFamily: "'IBM Plex Mono', monospace",
           fontSize: 13,
           fontWeight: 600,
-          color: "#E4DCC5",
+          color: "var(--ledger-tooltip-sub)",
           marginBottom: categories.length ? 8 : 0,
         }}
       >
@@ -85,7 +85,7 @@ export default function ChartTooltip({ tooltip, style }) {
                 +{formatTooltipAmount(cat.daily)}{" "}
               </span>
             )}
-            <span style={{ color: "#A69C82" }}>
+            <span style={{ color: "var(--ledger-text-tertiary)" }}>
               {formatTooltipAmount(cat.cumulative)}
             </span>
           </div>

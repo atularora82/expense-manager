@@ -5,7 +5,7 @@ import { BUDGET_BUCKETS, BUDGET_METHODS, getCategoryBucket } from "./budgetSetti
 const fieldLabel = {
   fontSize: 11,
   fontWeight: 600,
-  color: "#74836A",
+  color: "var(--ledger-muted)",
   textTransform: "uppercase",
   letterSpacing: "0.06em",
   display: "block",
@@ -29,7 +29,7 @@ function CategoryRow({
   const pct = hasBudget ? Math.min((spent / budget) * 100, 100) : 0;
   const over = hasBudget && spent > budget;
   const fillColor = !hasBudget
-    ? "#D8CDB4"
+    ? "var(--ledger-border)"
     : over
     ? "#A93B3B"
     : pct >= 80
@@ -43,11 +43,11 @@ function CategoryRow({
         alignItems: "center",
         gap: 10,
         padding: "10px 14px",
-        borderTop: "1px dashed #E4DCC5",
+        borderTop: "1px dashed var(--ledger-border-light)",
         flexWrap: "wrap",
       }}
     >
-      <div style={{ width: 118, fontSize: 12.5, color: "#1F2A22", flexShrink: 0 }}>
+      <div style={{ width: 118, fontSize: 12.5, color: "var(--ledger-text)", flexShrink: 0 }}>
         {c.label}
         {hasBudget && spent === 0 && (
           <div style={{ fontSize: 10, color: "#8B5E34", marginTop: 2 }}>
@@ -72,7 +72,7 @@ function CategoryRow({
         style={{
           flex: 1,
           minWidth: 80,
-          background: "#EDE6D6",
+          background: "var(--ledger-fill)",
           height: 8,
           borderRadius: 4,
           overflow: "hidden",
@@ -91,7 +91,7 @@ function CategoryRow({
         style={{
           fontFamily: "'IBM Plex Mono', monospace",
           fontSize: 11.5,
-          color: over ? "#A93B3B" : "#4A5A4E",
+          color: over ? "#A93B3B" : "var(--ledger-text-secondary)",
           width: 128,
           textAlign: "right",
           flexShrink: 0,
@@ -146,9 +146,9 @@ function GroupHeader({ title, hint }) {
         fontWeight: 600,
         letterSpacing: "0.08em",
         textTransform: "uppercase",
-        color: "#74836A",
-        background: "#F6F1E6",
-        borderTop: "1px solid #E4DCC5",
+        color: "var(--ledger-muted)",
+        background: "var(--ledger-bg)",
+        borderTop: "1px solid var(--ledger-border-light)",
       }}
     >
       {title}
@@ -159,7 +159,7 @@ function GroupHeader({ title, hint }) {
             textTransform: "none",
             letterSpacing: 0,
             marginLeft: 8,
-            color: "#A69C82",
+            color: "var(--ledger-text-tertiary)",
           }}
         >
           {hint}
@@ -228,7 +228,7 @@ export default function MonthlyBudgetSection({
           fontWeight: 600,
           letterSpacing: "0.1em",
           textTransform: "uppercase",
-          color: "#74836A",
+          color: "var(--ledger-muted)",
           marginBottom: 10,
         }}
       >
@@ -237,14 +237,14 @@ export default function MonthlyBudgetSection({
 
       <div
         style={{
-          border: "1px solid #D8CDB4",
+          border: "1px solid var(--ledger-border)",
           borderRadius: 8,
-          background: "#F6F1E6",
+          background: "var(--ledger-bg)",
           padding: "14px 16px",
           marginBottom: 12,
         }}
       >
-        <div style={{ fontSize: 12.5, color: "#74836A", marginBottom: 12, lineHeight: 1.45 }}>
+        <div style={{ fontSize: 12.5, color: "var(--ledger-muted)", marginBottom: 12, lineHeight: 1.45 }}>
           Classify each category, then auto-fill limits from an <strong>income rule</strong> or your{" "}
           <strong>3-month average</strong> spending. Use <strong>Avg</strong> on any row to copy
           history into that limit.
@@ -307,9 +307,9 @@ export default function MonthlyBudgetSection({
       {zeroSpendRebalancePreview?.pool > 0 && (
         <div
           style={{
-            border: "1px solid #D8CDB4",
+            border: "1px solid var(--ledger-border)",
             borderRadius: 8,
-            background: "#FFFDF8",
+            background: "var(--ledger-surface)",
             padding: "12px 16px",
             marginBottom: 12,
             display: "flex",
@@ -319,7 +319,7 @@ export default function MonthlyBudgetSection({
             justifyContent: "space-between",
           }}
         >
-          <div style={{ fontSize: 12.5, color: "#4A5A4E", lineHeight: 1.45, flex: 1 }}>
+          <div style={{ fontSize: 12.5, color: "var(--ledger-text-secondary)", lineHeight: 1.45, flex: 1 }}>
             {zeroSpendRebalancePreview.donors
               .map((d) => `${catMap[d.id]?.label || d.id} (${fmtMoney(d.amount)})`)
               .join(", ")}{" "}
@@ -346,9 +346,9 @@ export default function MonthlyBudgetSection({
 
       <div
         style={{
-          border: "1px solid #D8CDB4",
+          border: "1px solid var(--ledger-border)",
           borderRadius: 8,
-          background: "#FFFDF8",
+          background: "var(--ledger-surface)",
           overflow: "hidden",
         }}
       >

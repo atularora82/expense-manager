@@ -23,7 +23,7 @@ function BudgetSetupForm({
   const fieldLabel = {
     fontSize: 11,
     fontWeight: 600,
-    color: "#74836A",
+    color: "var(--ledger-muted)",
     textTransform: "uppercase",
     letterSpacing: "0.06em",
     display: "block",
@@ -33,12 +33,12 @@ function BudgetSetupForm({
   return (
     <div
       style={{
-        borderTop: compact ? "none" : "1px dashed #E4DCC5",
+        borderTop: compact ? "none" : "1px dashed var(--ledger-border-light)",
         paddingTop: compact ? 0 : 12,
       }}
     >
       {!compact && (
-        <div style={{ fontSize: 12.5, color: "#74836A", marginBottom: 12, lineHeight: 1.45 }}>
+        <div style={{ fontSize: 12.5, color: "var(--ledger-muted)", marginBottom: 12, lineHeight: 1.45 }}>
           Auto-fill category limits from an income rule or your spending history. Customize
           Needs/Wants per category on the <strong>Plan</strong> tab.
           {suggestedIncome > 0 ? (
@@ -173,7 +173,7 @@ function BucketDrillDown({
 }) {
   if (!entries.length) {
     return (
-      <div style={{ fontSize: 12.5, color: "#74836A", padding: "8px 0 4px 20px" }}>
+      <div style={{ fontSize: 12.5, color: "var(--ledger-muted)", padding: "8px 0 4px 20px" }}>
         No transactions in this bucket for this month.
       </div>
     );
@@ -181,7 +181,7 @@ function BucketDrillDown({
 
   const maxCat = categoryTotals[0]?.total || 1;
   const amountPrefix = bucketId === "investment" ? "↗" : "-";
-  const amountColor = bucketId === "investment" ? "#4A5A91" : "#1F2A22";
+  const amountColor = bucketId === "investment" ? "#4A5A91" : "var(--ledger-text)";
 
   return (
     <div
@@ -189,7 +189,7 @@ function BucketDrillDown({
         marginTop: 8,
         marginLeft: 4,
         paddingLeft: 16,
-        borderLeft: "2px solid #E4DCC5",
+        borderLeft: "2px solid var(--ledger-border-light)",
       }}
     >
       {categoryTotals.length > 0 && (
@@ -215,13 +215,13 @@ function BucketDrillDown({
               className={onCategoryClick ? "drill-bar" : undefined}
               title={onCategoryClick ? "Filter ledger to this category" : undefined}
             >
-              <div style={{ width: 100, fontSize: 12, color: "#4A5A4E", flexShrink: 0 }}>
+              <div style={{ width: 100, fontSize: 12, color: "var(--ledger-text-secondary)", flexShrink: 0 }}>
                 {c.label}
               </div>
               <div
                 style={{
                   flex: 1,
-                  background: "#EDE6D6",
+                  background: "var(--ledger-fill)",
                   height: 6,
                   borderRadius: 3,
                   overflow: "hidden",
@@ -240,7 +240,7 @@ function BucketDrillDown({
                 style={{
                   fontFamily: "'IBM Plex Mono', monospace",
                   fontSize: 11.5,
-                  color: "#4A5A4E",
+                  color: "var(--ledger-text-secondary)",
                   width: 72,
                   textAlign: "right",
                   flexShrink: 0,
@@ -255,7 +255,7 @@ function BucketDrillDown({
 
       <div
         style={{
-          border: "1px solid #E4DCC5",
+          border: "1px solid var(--ledger-border-light)",
           borderRadius: 6,
           overflow: "hidden",
           background: "#FFFCF5",
@@ -273,7 +273,7 @@ function BucketDrillDown({
                 alignItems: "center",
                 gap: 10,
                 padding: "8px 12px",
-                borderTop: i === 0 ? "none" : "1px dashed #EDE6D6",
+                borderTop: i === 0 ? "none" : "1px dashed var(--ledger-fill)",
                 fontSize: 12.5,
               }}
             >
@@ -281,7 +281,7 @@ function BucketDrillDown({
                 style={{
                   fontFamily: "'IBM Plex Mono', monospace",
                   fontSize: 11,
-                  color: "#A69C82",
+                  color: "var(--ledger-text-tertiary)",
                   width: 72,
                   flexShrink: 0,
                 }}
@@ -292,7 +292,7 @@ function BucketDrillDown({
                 style={{
                   flex: 1,
                   minWidth: 0,
-                  color: "#1F2A22",
+                  color: "var(--ledger-text)",
                   overflow: "hidden",
                   textOverflow: "ellipsis",
                   whiteSpace: "nowrap",
@@ -362,7 +362,7 @@ export default function MonthlyAllocationPanel({
           fontWeight: 600,
           letterSpacing: "0.1em",
           textTransform: "uppercase",
-          color: "#74836A",
+          color: "var(--ledger-muted)",
           marginBottom: 10,
         }}
       >
@@ -371,15 +371,15 @@ export default function MonthlyAllocationPanel({
 
       <div
         style={{
-          border: "1px solid #D8CDB4",
+          border: "1px solid var(--ledger-border)",
           borderRadius: 8,
-          background: "#FFFDF8",
+          background: "var(--ledger-surface)",
           padding: "14px 16px",
         }}
       >
         {!overview.hasIncome ? (
           <>
-            <div style={{ fontSize: 12.5, color: "#74836A", lineHeight: 1.45, marginBottom: 14 }}>
+            <div style={{ fontSize: 12.5, color: "var(--ledger-muted)", lineHeight: 1.45, marginBottom: 14 }}>
               {overview.suggestion}
             </div>
             {budgetSetup && (
@@ -391,7 +391,7 @@ export default function MonthlyAllocationPanel({
             <div
               style={{
                 fontSize: 12.5,
-                color: "#74836A",
+                color: "var(--ledger-muted)",
                 marginBottom: 14,
                 lineHeight: 1.45,
               }}
@@ -434,16 +434,16 @@ export default function MonthlyAllocationPanel({
                           flexWrap: "wrap",
                         }}
                       >
-                        <div style={{ fontSize: 12.5, color: "#1F2A22", fontWeight: 500 }}>
-                          <span style={{ marginRight: 6, color: "#A69C82" }}>
+                        <div style={{ fontSize: 12.5, color: "var(--ledger-text)", fontWeight: 500 }}>
+                          <span style={{ marginRight: 6, color: "var(--ledger-text-tertiary)" }}>
                             {expanded ? "▾" : "▸"}
                           </span>
                           {row.label}{" "}
-                          <span style={{ color: "#A69C82", fontWeight: 400 }}>
+                          <span style={{ color: "var(--ledger-text-tertiary)", fontWeight: 400 }}>
                             ({pct(row.pct)} target {fmtMoney(row.target)})
                           </span>
                           {entries.length > 0 && (
-                            <span style={{ color: "#A69C82", fontWeight: 400, marginLeft: 6 }}>
+                            <span style={{ color: "var(--ledger-text-tertiary)", fontWeight: 400, marginLeft: 6 }}>
                               · {entries.length} txn
                             </span>
                           )}
@@ -452,7 +452,7 @@ export default function MonthlyAllocationPanel({
                           style={{
                             fontFamily: "'IBM Plex Mono', monospace",
                             fontSize: 12,
-                            color: row.status === "over" ? "#A93B3B" : "#4A5A4E",
+                            color: row.status === "over" ? "#A93B3B" : "var(--ledger-text-secondary)",
                           }}
                         >
                           {fmtMoney(row.actual)} · {statusLabel(row)}
@@ -460,7 +460,7 @@ export default function MonthlyAllocationPanel({
                       </div>
                       <div
                         style={{
-                          background: "#EDE6D6",
+                          background: "var(--ledger-fill)",
                           height: 8,
                           borderRadius: 4,
                           overflow: "hidden",
@@ -493,15 +493,15 @@ export default function MonthlyAllocationPanel({
 
             <div
               style={{
-                borderTop: "1px dashed #E4DCC5",
+                borderTop: "1px dashed var(--ledger-border-light)",
                 paddingTop: 12,
                 fontSize: 12.5,
-                color: "#4A5A4E",
+                color: "var(--ledger-text-secondary)",
                 lineHeight: 1.5,
                 marginBottom: budgetSetup ? 14 : 0,
               }}
             >
-              <strong style={{ color: "#1F2A22" }}>Suggestion: </strong>
+              <strong style={{ color: "var(--ledger-text)" }}>Suggestion: </strong>
               {overview.suggestion}
             </div>
             {budgetSetup && <BudgetSetupForm {...budgetSetup} monthLabel={monthLabel} />}

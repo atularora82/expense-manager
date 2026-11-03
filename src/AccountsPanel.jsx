@@ -17,7 +17,7 @@ export default function AccountsPanel({ accounts, onAdd, onRemove }) {
   return (
     <div>
       {accounts.length === 0 ? (
-        <div style={{ fontSize: 13, color: "#74836A", marginBottom: 14 }}>
+        <div style={{ fontSize: 13, color: "var(--ledger-muted)", marginBottom: 14 }}>
           Add bank accounts, credit cards, or wallets to tag imports and entries.
         </div>
       ) : (
@@ -32,7 +32,7 @@ export default function AccountsPanel({ accounts, onAdd, onRemove }) {
                   alignItems: "center",
                   gap: 12,
                   padding: "10px 0",
-                  borderTop: i === 0 ? "none" : "1px dashed #E4DCC5",
+                  borderTop: i === 0 ? "none" : "1px dashed var(--ledger-border-light)",
                 }}
               >
                 <div
@@ -45,8 +45,8 @@ export default function AccountsPanel({ accounts, onAdd, onRemove }) {
                   }}
                 />
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 14, color: "#1F2A22" }}>{account.name}</div>
-                  <div style={{ fontSize: 12, color: "#74836A" }}>{typeInfo.label}</div>
+                  <div style={{ fontSize: 14, color: "var(--ledger-text)" }}>{account.name}</div>
+                  <div style={{ fontSize: 12, color: "var(--ledger-muted)" }}>{typeInfo.label}</div>
                 </div>
                 <button
                   type="button"
@@ -112,7 +112,7 @@ export default function AccountsPanel({ accounts, onAdd, onRemove }) {
 const labelStyle = {
   fontSize: 11,
   fontWeight: 600,
-  color: "#74836A",
+  color: "var(--ledger-muted)",
   textTransform: "uppercase",
   letterSpacing: "0.06em",
   display: "block",

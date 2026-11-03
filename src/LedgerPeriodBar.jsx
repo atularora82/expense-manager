@@ -164,7 +164,7 @@ export default function LedgerPeriodBar({
                 style={{
                   fontSize: 13.5,
                   fontFamily: "'IBM Plex Mono', monospace",
-                  color: "#1F2A22",
+                  color: "var(--ledger-text)",
                   minWidth: 150,
                   textAlign: "center",
                 }}
@@ -231,8 +231,8 @@ export default function LedgerPeriodBar({
                   right: 0,
                   top: "calc(100% + 6px)",
                   minWidth: 180,
-                  background: "#FFFDF8",
-                  border: "1px solid #D8CDB4",
+                  background: "var(--ledger-surface)",
+                  border: "1px solid var(--ledger-border)",
                   borderRadius: 8,
                   boxShadow: "0 8px 24px rgba(31,42,34,0.12)",
                   zIndex: 60,
@@ -267,11 +267,11 @@ export default function LedgerPeriodBar({
                       width: "100%",
                       padding: "10px 14px",
                       border: "none",
-                      borderBottom: "1px solid #EDE6D6",
+                      borderBottom: "1px solid var(--ledger-fill)",
                       background: "none",
                       textAlign: "left",
                       fontSize: 13,
-                      color: item.disabled ? "#A69C82" : "#1F2A22",
+                      color: item.disabled ? "var(--ledger-text-tertiary)" : "var(--ledger-text)",
                       cursor: item.disabled ? "not-allowed" : "pointer",
                     }}
                   >

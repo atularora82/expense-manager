@@ -39,8 +39,8 @@ export default function App() {
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          background: "#F6F1E6",
-          color: "#74836A",
+          background: "var(--ledger-bg)",
+          color: "var(--ledger-muted)",
           fontFamily: "Inter, sans-serif",
         }}
       >

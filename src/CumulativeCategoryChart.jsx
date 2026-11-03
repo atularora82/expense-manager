@@ -32,7 +32,7 @@ export default function CumulativeCategoryChart({
 
   if (!chartData?.areas?.length) {
     return (
-      <div style={{ fontSize: 13, color: "#74836A", padding: "12px 0" }}>
+      <div style={{ fontSize: 13, color: "var(--ledger-muted)", padding: "12px 0" }}>
         {emptyMessage}
       </div>
     );
@@ -46,16 +46,16 @@ export default function CumulativeCategoryChart({
   return (
     <div>
       {subtitle && (
-        <div style={{ fontSize: 12.5, color: "#74836A", marginBottom: 12 }}>
+        <div style={{ fontSize: 12.5, color: "var(--ledger-muted)", marginBottom: 12 }}>
           {subtitle}
         </div>
       )}
       <div
         style={{
           position: "relative",
-          border: "1px solid #D8CDB4",
+          border: "1px solid var(--ledger-border)",
           borderRadius: 8,
-          background: "#FFFDF8",
+          background: "var(--ledger-surface)",
           padding: "12px 8px 8px",
           overflow: "hidden",
         }}
@@ -89,7 +89,7 @@ export default function CumulativeCategoryChart({
                 x2={width - pad.right}
                 y1={tick.y}
                 y2={tick.y}
-                stroke="#E4DCC5"
+                stroke="var(--ledger-chart-grid)"
                 strokeWidth="1"
               />
               <text
@@ -97,7 +97,7 @@ export default function CumulativeCategoryChart({
                 y={tick.y + 4}
                 textAnchor="end"
                 fontSize="11"
-                fill="#74836A"
+                fill="var(--ledger-muted)"
                 fontFamily="'IBM Plex Mono', monospace"
               >
                 {formatChartAmount(tick.value)}
@@ -120,7 +120,7 @@ export default function CumulativeCategoryChart({
           <path
             d={linePath}
             fill="none"
-            stroke="#1F2A22"
+            stroke="var(--ledger-text)"
             strokeWidth="2"
             strokeLinecap="round"
             strokeLinejoin="round"
@@ -139,8 +139,8 @@ export default function CumulativeCategoryChart({
                 strokeDasharray="4 3"
                 opacity="0.8"
               />
-              <circle cx={hovered.x} cy={hovered.y} r="4.5" fill="#1F2A22" />
-              <circle cx={hovered.x} cy={hovered.y} r="2.5" fill="#FFFDF8" />
+              <circle cx={hovered.x} cy={hovered.y} r="4.5" fill="var(--ledger-text)" />
+              <circle cx={hovered.x} cy={hovered.y} r="2.5" fill="var(--ledger-surface)" />
             </g>
           )}
 
@@ -159,7 +159,7 @@ export default function CumulativeCategoryChart({
               y={height - 10}
               textAnchor="middle"
               fontSize="10.5"
-              fill="#74836A"
+              fill="var(--ledger-muted)"
               pointerEvents="none"
             >
               {item.label}
@@ -173,7 +173,7 @@ export default function CumulativeCategoryChart({
             flexWrap: "wrap",
             gap: "8px 14px",
             padding: "8px 10px 4px",
-            borderTop: "1px dashed #E4DCC5",
+            borderTop: "1px dashed var(--ledger-border-light)",
           }}
         >
           {areas.map((area) => (
@@ -184,7 +184,7 @@ export default function CumulativeCategoryChart({
                 alignItems: "center",
                 gap: 6,
                 fontSize: 11.5,
-                color: "#1F2A22",
+                color: "var(--ledger-text)",
               }}
             >
               <span

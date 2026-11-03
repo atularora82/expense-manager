@@ -4,7 +4,7 @@ const TYPE_STYLES = {
   warning: { border: "#E8C4C4", bg: "#FDF6F6", accent: "#A93B3B", icon: "!" },
   success: { border: "#B8D4C4", bg: "#F2F9F5", accent: "#2F6B4F", icon: "✓" },
   info: { border: "#B8CDDC", bg: "#F3F7FA", accent: "#3C6E91", icon: "i" },
-  tip: { border: "#E4D4A8", bg: "#FBF6EA", accent: "#C08A28", icon: "★" },
+  tip: { border: "#E4D4A8", bg: "var(--ledger-row-dup)", accent: "#C08A28", icon: "★" },
 };
 
 function TipCard({ tip, onCategoryClick }) {
@@ -47,13 +47,13 @@ function TipCard({ tip, onCategoryClick }) {
           style={{
             fontSize: 13.5,
             fontWeight: 600,
-            color: "#1F2A22",
+            color: "var(--ledger-text)",
             marginBottom: 4,
           }}
         >
           {tip.title}
         </div>
-        <div style={{ fontSize: 12.5, color: "#4A5A4E", lineHeight: 1.45 }}>
+        <div style={{ fontSize: 12.5, color: "var(--ledger-text-secondary)", lineHeight: 1.45 }}>
           {tip.body}
         </div>
         {clickable && (
@@ -84,7 +84,7 @@ export default function SavingTipsPanel({ tips, periodLabel, onCategoryClick }) 
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      <div style={{ fontSize: 12.5, color: "#74836A", lineHeight: 1.45 }}>
+      <div style={{ fontSize: 12.5, color: "var(--ledger-muted)", lineHeight: 1.45 }}>
         Personalized suggestions based on your {periodLabel} ledger. Tips refresh as
         you add entries and set budgets.
       </div>

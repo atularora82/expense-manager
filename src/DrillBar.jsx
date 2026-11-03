@@ -57,7 +57,7 @@ export default function DrillBar({
           <div
             style={{
               fontSize: 10,
-              color: "#A69C82",
+              color: "var(--ledger-text-tertiary)",
               marginTop: 2,
               fontWeight: 500,
               whiteSpace: "nowrap",

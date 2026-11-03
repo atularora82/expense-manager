@@ -97,6 +97,7 @@ import MonthlyBudgetSection from "./MonthlyBudgetSection.jsx";
 import SplitTransactionModal from "./SplitTransactionModal.jsx";
 import LedgerTabBar from "./LedgerTabBar.jsx";
 import LedgerPeriodBar from "./LedgerPeriodBar.jsx";
+import ThemeToggle from "./ThemeToggle.jsx";
 import {
   buildMonthlyAllocationOverview,
   groupEntriesForAllocationDrill,
@@ -413,8 +414,8 @@ function CollapsiblePanel({ title, meta, open, onToggle, hideToggle = false, chi
   return (
     <div
       style={{
-        background: "#FFFDF8",
-        border: "1px solid #D8CDB4",
+        background: "var(--ledger-surface)",
+        border: "1px solid var(--ledger-border)",
         borderRadius: 8,
         marginBottom: 28,
         overflow: "hidden",
@@ -442,23 +443,23 @@ function CollapsiblePanel({ title, meta, open, onToggle, hideToggle = false, chi
               fontFamily: "'Fraunces', serif",
               fontSize: 15,
               fontWeight: 600,
-              color: "#1F2A22",
+              color: "var(--ledger-text)",
             }}
           >
             {title}
           </div>
           {meta && (
-            <div style={{ fontSize: 12.5, color: "#74836A", marginTop: 3 }}>{meta}</div>
+            <div style={{ fontSize: 12.5, color: "var(--ledger-muted)", marginTop: 3 }}>{meta}</div>
           )}
         </div>
         {!hideToggle && (
-          <span style={{ fontSize: 12, color: "#74836A", flexShrink: 0 }}>
+          <span style={{ fontSize: 12, color: "var(--ledger-muted)", flexShrink: 0 }}>
             {open ? "Hide" : "Show"}
           </span>
         )}
       </button>
       {open && (
-        <div style={{ borderTop: "1px dashed #E4DCC5", padding: "12px 18px 16px" }}>
+        <div style={{ borderTop: "1px dashed var(--ledger-border-light)", padding: "12px 18px 16px" }}>
           {children}
         </div>
       )}
@@ -1346,7 +1347,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
   function renderEntryRows(list) {
     if (list.length === 0) {
       return (
-        <div style={{ fontSize: 13, color: "#74836A", padding: "8px 0" }}>
+        <div style={{ fontSize: 13, color: "var(--ledger-muted)", padding: "8px 0" }}>
           No entries in this section for the current view.
         </div>
       );
@@ -1354,10 +1355,10 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
     return (
       <div
         style={{
-          border: "1px solid #D8CDB4",
+          border: "1px solid var(--ledger-border)",
           borderRadius: 8,
           overflow: "hidden",
-          background: "#FFFDF8",
+          background: "var(--ledger-surface)",
         }}
       >
         {list.map((en, i) => {
@@ -1368,7 +1369,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
             ? "#2F6B4F"
             : isInvestment
             ? "#4A5A91"
-            : "#1F2A22";
+            : "var(--ledger-text)";
           const amountPrefix = isIncome ? "+" : isInvestment ? "↗" : "-";
           const isSelected = selectedEntryIds.includes(en.id);
           return (
@@ -1380,7 +1381,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                 alignItems: "center",
                 gap: 14,
                 padding: "13px 18px",
-                borderTop: i === 0 ? "none" : "1px dashed #E4DCC5",
+                borderTop: i === 0 ? "none" : "1px dashed var(--ledger-border-light)",
                 opacity: en.hidden ? 0.65 : 1,
                 background: isSelected ? "#F0EBDD" : en.hidden ? "#FAF7F0" : undefined,
               }}
@@ -1398,7 +1399,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                 style={{
                   fontFamily: "'IBM Plex Mono', monospace",
                   fontSize: 12,
-                  color: "#74836A",
+                  color: "var(--ledger-muted)",
                   width: 92,
                   flexShrink: 0,
                   lineHeight: 1.3,
@@ -1406,7 +1407,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
               >
                 <div>{fmtDateFull(en.date)}</div>
                 {en.recordedAt && en.date !== en.recordedAt.slice(0, 10) && (
-                  <div style={{ fontSize: 10, color: "#A69C82", marginTop: 2 }}>
+                  <div style={{ fontSize: 10, color: "var(--ledger-text-tertiary)", marginTop: 2 }}>
                     Logged {fmtDateFull(en.recordedAt.slice(0, 10))}
                   </div>
                 )}
@@ -1415,7 +1416,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                 <div
                   style={{
                     fontSize: 14,
-                    color: "#1F2A22",
+                    color: "var(--ledger-text)",
                     overflow: "hidden",
                     textOverflow: "ellipsis",
                     whiteSpace: "nowrap",
@@ -1424,7 +1425,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                   {en.description}
                 </div>
                 {en.hidden && (
-                  <div style={{ fontSize: 11, color: "#A69C82", marginTop: 3 }}>
+                  <div style={{ fontSize: 11, color: "var(--ledger-text-tertiary)", marginTop: 3 }}>
                     Hidden from totals &amp; reports
                   </div>
                 )}
@@ -1443,7 +1444,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                   <div style={{ fontSize: 11, color: "#8B5E34", marginTop: 3 }}>
                     Split entry
                     {en.description.includes(" — ") && (
-                      <span style={{ color: "#A69C82" }}>
+                      <span style={{ color: "var(--ledger-text-tertiary)" }}>
                         {" "}
                         · {en.description.slice(en.description.indexOf(" — ") + 3)}
                       </span>
@@ -1451,7 +1452,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                   </div>
                 )}
                 {en.accountId && accountLabel(accounts, en.accountId) && (
-                  <div style={{ fontSize: 11, color: "#A69C82", marginTop: 3 }}>
+                  <div style={{ fontSize: 11, color: "var(--ledger-text-tertiary)", marginTop: 3 }}>
                     {accountLabel(accounts, en.accountId)}
                   </div>
                 )}
@@ -1484,7 +1485,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                     background: "none",
                     border: "none",
                     cursor: "pointer",
-                    color: en.hidden ? "#3C6E91" : "#74836A",
+                    color: en.hidden ? "#3C6E91" : "var(--ledger-muted)",
                     fontSize: 13,
                     padding: 4,
                   }}
@@ -1512,7 +1513,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                     background: "none",
                     border: "none",
                     cursor: "pointer",
-                    color: "#74836A",
+                    color: "var(--ledger-muted)",
                     fontSize: 13,
                     padding: 4,
                   }}
@@ -2750,7 +2751,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
           fontSize: 12.5,
         }}
       >
-        <span style={{ color: "#74836A", fontWeight: 600 }}>Drill-down:</span>
+        <span style={{ color: "var(--ledger-muted)", fontWeight: 600 }}>Drill-down:</span>
         {periodMode === "year" && !periodDrillDay && (
           <>
             <button type="button" className="drill-crumb" onClick={drillToYearView}>
@@ -2758,7 +2759,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
             </button>
             {filterCat !== "all" && (
               <>
-                <span style={{ color: "#A69C82" }}>›</span>
+                <span style={{ color: "var(--ledger-text-tertiary)" }}>›</span>
                 <button
                   type="button"
                   className={`drill-crumb${yearDrillMonth ? "" : " drill-crumb-active"}`}
@@ -2773,7 +2774,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
             )}
             {yearDrillMonth && (
               <>
-                <span style={{ color: "#A69C82" }}>›</span>
+                <span style={{ color: "var(--ledger-text-tertiary)" }}>›</span>
                 <button type="button" className="drill-crumb drill-crumb-active">
                   {monthNameOnly(yearDrillMonth)}
                 </button>
@@ -2786,7 +2787,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
             <button type="button" className="drill-crumb" onClick={drillToYearView}>
               {year}
             </button>
-            <span style={{ color: "#A69C82" }}>›</span>
+            <span style={{ color: "var(--ledger-text-tertiary)" }}>›</span>
             <button
               type="button"
               className={`drill-crumb${periodDrillDay ? "" : " drill-crumb-active"}`}
@@ -2810,7 +2811,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
         {periodDrillDay && (
           <>
             {(periodMode === "month" || periodMode === "week") && (
-              <span style={{ color: "#A69C82" }}>›</span>
+              <span style={{ color: "var(--ledger-text-tertiary)" }}>›</span>
             )}
             <button type="button" className="drill-crumb drill-crumb-active">
               {fmtDateFull(periodDrillDay)}
@@ -2819,7 +2820,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
         )}
         {activeCategoryLabel && periodMode !== "year" && (
           <>
-            <span style={{ color: "#A69C82" }}>·</span>
+            <span style={{ color: "var(--ledger-text-tertiary)" }}>·</span>
             <button
               type="button"
               className="drill-crumb drill-crumb-active"
@@ -2845,10 +2846,10 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
     <div
       style={{
         fontFamily: "'Inter', sans-serif",
-        background: "#F6F1E6",
+        background: "var(--ledger-bg)",
         minHeight: "100vh",
         padding: "0",
-        color: "#1F2A22",
+        color: "var(--ledger-text)",
       }}
     >
       <style>{`
@@ -2860,18 +2861,18 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
         }
         .ledger-input, .ledger-select {
           font-family: 'Inter', sans-serif;
-          background: #FFFDF8;
-          border: 1px solid #D8CDB4;
+          background: var(--ledger-surface);
+          border: 1px solid var(--ledger-border);
           border-radius: 4px;
           padding: 9px 10px;
           font-size: 14px;
-          color: #1F2A22;
+          color: var(--ledger-text);
           width: 100%;
           outline: none;
         }
         .ledger-input:focus, .ledger-select:focus {
           border-color: #C08A28;
-          box-shadow: 0 0 0 3px rgba(192,138,40,0.15);
+          box-shadow: 0 0 0 3px var(--ledger-focus-ring);
         }
         .ledger-btn {
           font-family: 'Inter', sans-serif;
@@ -2879,8 +2880,8 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
           font-size: 13px;
           letter-spacing: 0.04em;
           text-transform: uppercase;
-          background: #1F2A22;
-          color: #F6F1E6;
+          background: var(--ledger-btn-primary-bg);
+          color: var(--ledger-btn-primary-text);
           border: none;
           border-radius: 4px;
           padding: 11px 18px;
@@ -2890,47 +2891,47 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
         .ledger-btn:hover { opacity: 0.85; }
         .ledger-btn-ghost {
           background: transparent;
-          color: #4A5A4E;
-          border: 1px solid #D8CDB4;
+          color: var(--ledger-text-secondary);
+          border: 1px solid var(--ledger-border);
         }
-        .ledger-btn-ghost:hover { background: #EDE6D6; opacity: 1; }
+        .ledger-btn-ghost:hover { background: var(--ledger-btn-ghost-hover); opacity: 1; }
         .import-preview-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
         .import-preview-table th {
           position: sticky;
           top: 0;
-          background: #F6F1E6;
+          background: var(--ledger-bg);
           z-index: 1;
           text-align: left;
           font-size: 10px;
           font-weight: 600;
           letter-spacing: 0.06em;
           text-transform: uppercase;
-          color: #74836A;
+          color: var(--ledger-muted);
           padding: 8px 6px;
-          border-bottom: 1px solid #D8CDB4;
+          border-bottom: 1px solid var(--ledger-border);
         }
         .import-preview-table td {
           padding: 6px;
-          border-bottom: 1px dashed #E4DCC5;
+          border-bottom: 1px dashed var(--ledger-border-light);
           vertical-align: middle;
         }
         .import-preview-table tr.row-excluded td { opacity: 0.45; }
-        .import-preview-table tr.row-duplicate td { background: #FBF6EA; }
-        .import-preview-table tr.row-invalid td { background: #FDF0F0; }
+        .import-preview-table tr.row-duplicate td { background: var(--ledger-row-dup); }
+        .import-preview-table tr.row-invalid td { background: var(--ledger-row-invalid); }
         .import-preview-input {
           font-family: 'Inter', sans-serif;
-          background: #FFFDF8;
-          border: 1px solid #D8CDB4;
+          background: var(--ledger-surface);
+          border: 1px solid var(--ledger-border);
           border-radius: 4px;
           padding: 6px 8px;
           font-size: 12.5px;
-          color: #1F2A22;
+          color: var(--ledger-text);
           width: 100%;
           outline: none;
         }
         .import-preview-input:focus {
           border-color: #C08A28;
-          box-shadow: 0 0 0 2px rgba(192,138,40,0.12);
+          box-shadow: 0 0 0 2px var(--ledger-focus-ring);
         }
         .import-preview-check { width: 16px; height: 16px; cursor: pointer; }
         .drill-bar {
@@ -2948,20 +2949,20 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
           font: inherit;
           color: inherit;
         }
-        .drill-bar:hover { background: #F6F1E6; }
+        .drill-bar:hover { background: var(--ledger-bg); }
         .drill-bar-active {
-          background: #EEF4F0;
+          background: var(--ledger-highlight);
           box-shadow: inset 0 0 0 1px #2F6B4F;
         }
         .drill-bar-label {
           font-size: 12.5px;
-          color: #1F2A22;
+          color: var(--ledger-text);
           flex-shrink: 0;
           text-align: left;
         }
         .drill-bar-track {
           flex: 1;
-          background: #EDE6D6;
+          background: var(--ledger-fill);
           height: 8px;
           border-radius: 4px;
           overflow: hidden;
@@ -2972,21 +2973,21 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
           font-size: 12.5px;
           width: 88px;
           text-align: right;
-          color: #1F2A22;
+          color: var(--ledger-text);
           flex-shrink: 0;
         }
         .drill-crumb {
-          background: #FFFDF8;
-          border: 1px solid #D8CDB4;
+          background: var(--ledger-surface);
+          border: 1px solid var(--ledger-border);
           border-radius: 999px;
           padding: 4px 10px;
           font-size: 12px;
-          color: #1F2A22;
+          color: var(--ledger-text);
           cursor: pointer;
         }
-        .drill-crumb:hover { background: #F6F1E6; }
+        .drill-crumb:hover { background: var(--ledger-bg); }
         .drill-crumb-active {
-          background: #EEF4F0;
+          background: var(--ledger-highlight);
           border-color: #2F6B4F;
           color: #2F6B4F;
         }
@@ -2995,15 +2996,15 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
           font-size: 12.5px;
           font-weight: 500;
           padding: 8px 14px;
-          border: 1px solid #D8CDB4;
-          background: #FFFDF8;
-          color: #4A5A4E;
+          border: 1px solid var(--ledger-border);
+          background: var(--ledger-surface);
+          color: var(--ledger-text-secondary);
           cursor: pointer;
         }
         .seg-btn.active {
-          background: #1F2A22;
-          color: #F6F1E6;
-          border-color: #1F2A22;
+          background: var(--ledger-btn-primary-bg);
+          color: var(--ledger-btn-primary-text);
+          border-color: var(--ledger-btn-primary-bg);
         }
         .cat-stamp {
           display: inline-flex;
@@ -3019,11 +3020,11 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
           border: 1px dashed;
           white-space: nowrap;
         }
-        .row-hover:hover { background: #FBF8F1 !important; }
+        .row-hover:hover { background: var(--ledger-row-hover) !important; }
         .ledger-modal-backdrop {
           position: fixed;
           inset: 0;
-          background: rgba(31,42,34,0.45);
+          background: var(--ledger-modal-backdrop);
           display: flex;
           align-items: center;
           justify-content: center;
@@ -3031,8 +3032,8 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
           padding: 20px;
         }
         .ledger-modal {
-          background: #FFFDF8;
-          border: 1px solid #D8CDB4;
+          background: var(--ledger-surface);
+          border: 1px solid var(--ledger-border);
           border-radius: 8px;
           max-width: 640px;
           width: 100%;
@@ -3053,7 +3054,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
           left: 12px;
           top: 50%;
           transform: translateY(-50%);
-          color: #74836A;
+          color: var(--ledger-muted);
           font-size: 14px;
           pointer-events: none;
         }
@@ -3063,10 +3064,10 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
           top: 50%;
           transform: translateY(-50%);
           font-size: 10.5px;
-          color: #A69C82;
+          color: var(--ledger-text-tertiary);
           letter-spacing: 0.04em;
         }
-        ::placeholder { color: #A69C82; }
+        ::placeholder { color: var(--ledger-text-tertiary); }
         @media (max-width: 720px) {
           .lg-grid { grid-template-columns: 1fr !important; }
           .lg-header { flex-direction: column !important; align-items: flex-start !important; gap: 16px !important; }
@@ -3076,13 +3077,13 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
           position: sticky;
           top: 0;
           z-index: 40;
-          background: #F6F1E6;
+          background: var(--ledger-sticky-bg);
           padding: 12px 0 14px;
           margin-bottom: 8px;
-          border-bottom: 1px solid #E4DCC5;
+          border-bottom: 1px solid var(--ledger-border-light);
         }
         .ledger-tab-btn { border-radius: 4px !important; }
-        .ledger-tab-btn.active { background: #1F2A22; color: #F6F1E6; border-color: #1F2A22; }
+        .ledger-tab-btn.active { background: var(--ledger-btn-primary-bg); color: var(--ledger-btn-primary-text); border-color: var(--ledger-btn-primary-bg); }
         @media print {
           body * { visibility: hidden; }
           .period-report-print, .period-report-print * { visibility: visible; }
@@ -3108,7 +3109,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
             justifyContent: "space-between",
             alignItems: "flex-end",
             marginBottom: 32,
-            borderBottom: "2px solid #1F2A22",
+            borderBottom: "2px solid var(--ledger-text)",
             paddingBottom: 20,
           }}
         >
@@ -3119,7 +3120,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                 fontWeight: 600,
                 letterSpacing: "0.14em",
                 textTransform: "uppercase",
-                color: "#74836A",
+                color: "var(--ledger-muted)",
                 marginBottom: 4,
               }}
             >
@@ -3143,22 +3144,23 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                 fontSize: 34,
                 fontWeight: 600,
                 margin: 0,
-                color: "#1F2A22",
+                color: "var(--ledger-text)",
               }}
             >
               Expense Book
             </h1>
             {user?.email && (
-              <div style={{ fontSize: 12.5, color: "#74836A", marginTop: 6 }}>
+              <div style={{ fontSize: 12.5, color: "var(--ledger-muted)", marginTop: 6 }}>
                 {user.email}
               </div>
             )}
-            <div style={{ fontSize: 11.5, color: "#A8B5A0", marginTop: 6 }}>
+            <div style={{ fontSize: 11.5, color: "var(--ledger-text-faint)", marginTop: 6 }}>
               v{APP_VERSION}
             </div>
           </div>
 
           <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
+            <ThemeToggle />
             {onSignOut && (
               <button
                 type="button"
@@ -3303,7 +3305,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                 background: "none",
                 border: "none",
                 cursor: "pointer",
-                color: "#74836A",
+                color: "var(--ledger-muted)",
                 fontSize: 12,
                 fontWeight: 500,
               }}
@@ -3392,10 +3394,10 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
           onDragLeave={() => setStatementDragActive(false)}
           onDrop={handleStatementDrop}
           style={{
-            background: statementDragActive ? "#F0EBDD" : "#FFFDF8",
+            background: statementDragActive ? "#F0EBDD" : "var(--ledger-surface)",
             border: statementDragActive
               ? "2px dashed #2F6B4F"
-              : "2px solid #1F2A22",
+              : "2px solid var(--ledger-text)",
             borderRadius: 8,
             padding: "24px 26px",
             marginBottom: 28,
@@ -3429,13 +3431,13 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                   fontFamily: "'Fraunces', serif",
                   fontSize: 20,
                   fontWeight: 600,
-                  color: "#1F2A22",
+                  color: "var(--ledger-text)",
                   marginBottom: 8,
                 }}
               >
                 Import bank statement
               </div>
-              <div style={{ fontSize: 13.5, color: "#74836A", lineHeight: 1.55 }}>
+              <div style={{ fontSize: 13.5, color: "var(--ledger-muted)", lineHeight: 1.55 }}>
                 Download your monthly statement as CSV or Excel, then import it here.
                 Debits become expenses, credits become income, and saved category
                 rules apply automatically.
@@ -3500,7 +3502,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
             style={{
               marginTop: 14,
               fontSize: 12,
-              color: statementDragActive ? "#2F6B4F" : "#74836A",
+              color: statementDragActive ? "#2F6B4F" : "var(--ledger-muted)",
             }}
           >
             {statementDragActive
@@ -3568,7 +3570,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
               onClick={isListening ? stopListening : startListening}
               className="ledger-btn"
               style={{
-                background: isListening ? "#A93B3B" : "#1F2A22",
+                background: isListening ? "#A93B3B" : "var(--ledger-text)",
                 display: "flex",
                 alignItems: "center",
                 gap: 7,
@@ -3583,7 +3585,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                   width: 7,
                   height: 7,
                   borderRadius: "50%",
-                  background: isListening ? "#F6F1E6" : "#C08A28",
+                  background: isListening ? "var(--ledger-bg)" : "#C08A28",
                   animation: isListening ? "pulse 1s infinite" : "none",
                 }}
               />
@@ -3601,9 +3603,9 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
             <div
               style={{
                 fontSize: 12.5,
-                color: "#4A5A4E",
-                background: "#F6F1E6",
-                border: "1px solid #E4DCC5",
+                color: "var(--ledger-text-secondary)",
+                background: "var(--ledger-bg)",
+                border: "1px solid var(--ledger-border-light)",
                 borderRadius: 4,
                 padding: "8px 10px",
                 marginBottom: 14,
@@ -3617,7 +3619,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
               style={{
                 fontSize: 12.5,
                 fontStyle: "italic",
-                color: "#74836A",
+                color: "var(--ledger-muted)",
                 marginBottom: 14,
               }}
             >
@@ -3639,7 +3641,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                 style={{
                   fontSize: 11,
                   fontWeight: 600,
-                  color: "#74836A",
+                  color: "var(--ledger-muted)",
                   textTransform: "uppercase",
                   letterSpacing: "0.06em",
                   display: "block",
@@ -3663,7 +3665,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                 style={{
                   fontSize: 11,
                   fontWeight: 600,
-                  color: "#74836A",
+                  color: "var(--ledger-muted)",
                   textTransform: "uppercase",
                   letterSpacing: "0.06em",
                   display: "block",
@@ -3687,7 +3689,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                   marginTop: 5,
                 }}
               >
-                <span style={{ fontSize: 12, color: "#74836A" }}>
+                <span style={{ fontSize: 12, color: "var(--ledger-muted)" }}>
                   {formatTransactionDate(date)}
                   {date === todayStr() && (
                     <span style={{ color: "#2F6B4F", fontWeight: 600 }}> · Today</span>
@@ -3717,7 +3719,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                 style={{
                   fontSize: 11,
                   fontWeight: 600,
-                  color: "#74836A",
+                  color: "var(--ledger-muted)",
                   textTransform: "uppercase",
                   letterSpacing: "0.06em",
                   display: "block",
@@ -3746,7 +3748,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                 style={{
                   fontSize: 11,
                   fontWeight: 600,
-                  color: "#74836A",
+                  color: "var(--ledger-muted)",
                   textTransform: "uppercase",
                   letterSpacing: "0.06em",
                   display: "block",
@@ -3775,7 +3777,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
               style={{
                 fontSize: 11,
                 fontWeight: 600,
-                color: "#74836A",
+                color: "var(--ledger-muted)",
                 textTransform: "uppercase",
                 letterSpacing: "0.06em",
                 display: "block",
@@ -3815,7 +3817,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                   alignItems: "center",
                   gap: 8,
                   fontSize: 13,
-                  color: "#4A5A4E",
+                  color: "var(--ledger-text-secondary)",
                   cursor: "pointer",
                 }}
               >
@@ -3826,7 +3828,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                 />
                 Repeat this entry
                 {formType === "investment" && (
-                  <span style={{ color: "#74836A", fontSize: 12 }}>
+                  <span style={{ color: "var(--ledger-muted)", fontSize: 12 }}>
                     {" "}(recommended for SIP / LIC)
                   </span>
                 )}
@@ -3852,7 +3854,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                 alignItems: "flex-start",
                 gap: 8,
                 fontSize: 13,
-                color: "#4A5A4E",
+                color: "var(--ledger-text-secondary)",
                 cursor: "pointer",
               }}
             >
@@ -3864,7 +3866,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
               />
               <span>
                 Hide from ledger
-                <span style={{ display: "block", fontSize: 12, color: "#74836A", marginTop: 2 }}>
+                <span style={{ display: "block", fontSize: 12, color: "var(--ledger-muted)", marginTop: 2 }}>
                   Excluded from totals, charts, and reports — useful for salary or
                   sensitive income.
                 </span>
@@ -3887,7 +3889,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
               <div style={{ fontWeight: 600, marginBottom: 6 }}>
                 Possible duplicate
               </div>
-              <div style={{ color: "#4A5A4E", marginBottom: 8 }}>
+              <div style={{ color: "var(--ledger-text-secondary)", marginBottom: 8 }}>
                 {fmtMoney(parseFloat(amount))} on {formatTransactionDate(date)}{" "}
                 matches {duplicateMatches.length} existing entr
                 {duplicateMatches.length === 1 ? "y" : "ies"}:
@@ -3896,14 +3898,14 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                 {duplicateMatches.slice(0, 3).map((en) => {
                   const cat = catInfoFor(en.type, en.category);
                   return (
-                    <div key={en.id} style={{ fontSize: 12.5, color: "#1F2A22" }}>
+                    <div key={en.id} style={{ fontSize: 12.5, color: "var(--ledger-text)" }}>
                       &bull; {en.description}
                       {cat?.label ? ` (${cat.label})` : ""} &mdash; {en.type}
                     </div>
                   );
                 })}
                 {duplicateMatches.length > 3 && (
-                  <div style={{ fontSize: 12, color: "#74836A" }}>
+                  <div style={{ fontSize: 12, color: "var(--ledger-muted)" }}>
                     + {duplicateMatches.length - 3} more
                   </div>
                 )}
@@ -3924,7 +3926,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                   Add anyway
                 </button>
               ) : (
-                <div style={{ fontSize: 12, color: "#74836A", marginTop: 8 }}>
+                <div style={{ fontSize: 12, color: "var(--ledger-muted)", marginTop: 8 }}>
                   Duplicate acknowledged &mdash; click Add entry to save.
                 </div>
               )}
@@ -3969,8 +3971,8 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
         {/* Recurring entries */}
         <div
           style={{
-            background: "#FFFDF8",
-            border: "1px solid #D8CDB4",
+            background: "var(--ledger-surface)",
+            border: "1px solid var(--ledger-border)",
             borderRadius: 8,
             marginBottom: 28,
             overflow: "hidden",
@@ -3991,16 +3993,16 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
               fontFamily: "'Fraunces', serif",
               fontSize: 15,
               fontWeight: 600,
-              color: "#1F2A22",
+              color: "var(--ledger-text)",
             }}
           >
             Recurring entries ({recurring.length})
-            <span style={{ fontSize: 12, color: "#74836A" }}>
+            <span style={{ fontSize: 12, color: "var(--ledger-muted)" }}>
               {showRecurring ? "Hide" : "Show"}
             </span>
           </button>
           {showRecurring && (
-            <div style={{ borderTop: "1px dashed #E4DCC5", padding: "12px 18px 16px" }}>
+            <div style={{ borderTop: "1px dashed var(--ledger-border-light)", padding: "12px 18px 16px" }}>
               {recurringSuggestions.length > 0 && (
                 <div style={{ marginBottom: 16 }}>
                   <div
@@ -4009,13 +4011,13 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                       fontWeight: 600,
                       letterSpacing: "0.1em",
                       textTransform: "uppercase",
-                      color: "#74836A",
+                      color: "var(--ledger-muted)",
                       marginBottom: 8,
                     }}
                   >
                     Detected patterns
                   </div>
-                  <div style={{ fontSize: 12.5, color: "#74836A", marginBottom: 10 }}>
+                  <div style={{ fontSize: 12.5, color: "var(--ledger-muted)", marginBottom: 10 }}>
                     These look like subscriptions or regular payments from your ledger.
                   </div>
                   {recurringSuggestions.map((s) => {
@@ -4028,13 +4030,13 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                           alignItems: "center",
                           gap: 12,
                           padding: "10px 0",
-                          borderTop: "1px dashed #E4DCC5",
+                          borderTop: "1px dashed var(--ledger-border-light)",
                           flexWrap: "wrap",
                         }}
                       >
                         <div style={{ flex: 1, minWidth: 140 }}>
-                          <div style={{ fontSize: 14, color: "#1F2A22" }}>{s.description}</div>
-                          <div style={{ fontSize: 12, color: "#74836A", marginTop: 2 }}>
+                          <div style={{ fontSize: 14, color: "var(--ledger-text)" }}>{s.description}</div>
+                          <div style={{ fontSize: 12, color: "var(--ledger-muted)", marginTop: 2 }}>
                             {s.frequency === "weekly" ? "Weekly" : "Monthly"} &middot;{" "}
                             {s.occurrences} times
                           </div>
@@ -4075,7 +4077,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                 </div>
               )}
               {recurring.length === 0 && recurringSuggestions.length === 0 ? (
-                <div style={{ fontSize: 13, color: "#74836A" }}>
+                <div style={{ fontSize: 13, color: "var(--ledger-muted)" }}>
                   No recurring entries yet. Check &ldquo;Repeat this entry&rdquo; when adding Netflix, rent, salary, etc.
                 </div>
               ) : (
@@ -4089,14 +4091,14 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                         alignItems: "center",
                         gap: 12,
                         padding: "10px 0",
-                        borderTop: i === 0 ? "none" : "1px dashed #E4DCC5",
+                        borderTop: i === 0 ? "none" : "1px dashed var(--ledger-border-light)",
                         flexWrap: "wrap",
                         opacity: r.active === false ? 0.55 : 1,
                       }}
                     >
                       <div style={{ flex: 1, minWidth: 140 }}>
-                        <div style={{ fontSize: 14, color: "#1F2A22" }}>{r.description}</div>
-                        <div style={{ fontSize: 12, color: "#74836A", marginTop: 2 }}>
+                        <div style={{ fontSize: 14, color: "var(--ledger-text)" }}>{r.description}</div>
+                        <div style={{ fontSize: 12, color: "var(--ledger-muted)", marginTop: 2 }}>
                           {r.frequency === "weekly" ? "Every week" : `Day ${r.dayOfMonth} each month`}
                           {r.active === false && " · paused"}
                         </div>
@@ -4125,7 +4127,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                           background: "none",
                           border: "none",
                           cursor: "pointer",
-                          color: "#74836A",
+                          color: "var(--ledger-muted)",
                           fontSize: 12,
                         }}
                       >
@@ -4194,7 +4196,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
           <div
             style={{
               fontSize: 12.5,
-              color: "#74836A",
+              color: "var(--ledger-muted)",
               marginBottom: 28,
             }}
           >
@@ -4303,7 +4305,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                 alignItems: "center",
                 gap: 6,
                 fontSize: 12.5,
-                color: "#74836A",
+                color: "var(--ledger-muted)",
                 cursor: "pointer",
               }}
             >
@@ -4347,12 +4349,12 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
               flexWrap: "wrap",
               alignItems: "center",
               padding: "12px 14px",
-              background: "#F6F1E6",
-              border: "1px solid #E4DCC5",
+              background: "var(--ledger-bg)",
+              border: "1px solid var(--ledger-border-light)",
               borderRadius: 8,
             }}
           >
-            <span style={{ fontSize: 13, color: "#1F2A22", fontWeight: 600 }}>
+            <span style={{ fontSize: 13, color: "var(--ledger-text)", fontWeight: 600 }}>
               {selectedEntryIds.length} selected
             </span>
             <button
@@ -4416,8 +4418,8 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
               fontSize: 12.5,
               color: "#3C6E91",
               marginBottom: 20,
-              background: "#F6F1E6",
-              border: "1px solid #E4DCC5",
+              background: "var(--ledger-bg)",
+              border: "1px solid var(--ledger-border-light)",
               borderRadius: 6,
               padding: "10px 14px",
             }}
@@ -4426,7 +4428,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
             {globalSearchTotals?.count ?? 0} result
             {(globalSearchTotals?.count ?? 0) === 1 ? "" : "s"}
             {globalSearchTotals && globalSearchTotals.count > 0 && (
-              <span style={{ color: "#74836A" }}>
+              <span style={{ color: "var(--ledger-muted)" }}>
                 {" "}
                 (expenses {fmtMoney(globalSearchTotals.expense)}
                 {globalSearchTotals.income > 0 &&
@@ -4440,7 +4442,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
         )}
 
         {!loaded && (
-          <div style={{ color: "#74836A", fontSize: 14, padding: "20px 0" }}>
+          <div style={{ color: "var(--ledger-muted)", fontSize: 14, padding: "20px 0" }}>
             Loading your ledger...
           </div>
         )}
@@ -4448,11 +4450,11 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
         {loaded && displayEntries.length === 0 && (
           <div
             style={{
-              border: "1px dashed #D8CDB4",
+              border: "1px dashed var(--ledger-border)",
               borderRadius: 8,
               padding: "40px 20px",
               textAlign: "center",
-              color: "#74836A",
+              color: "var(--ledger-muted)",
               fontSize: 14,
               marginBottom: 28,
             }}
@@ -4529,7 +4531,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
             <div
               style={{
                 fontSize: 12,
-                color: "#74836A",
+                color: "var(--ledger-muted)",
                 marginTop: -12,
                 marginBottom: 16,
               }}
@@ -4549,9 +4551,9 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
         {periodMode === "year" && filterCat !== "all" && (
           <div
             style={{
-              border: "1px solid #D8CDB4",
+              border: "1px solid var(--ledger-border)",
               borderRadius: 8,
-              background: "#FFFDF8",
+              background: "var(--ledger-surface)",
               padding: "14px 16px",
               marginBottom: 20,
             }}
@@ -4562,7 +4564,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                 fontWeight: 600,
                 letterSpacing: "0.1em",
                 textTransform: "uppercase",
-                color: "#74836A",
+                color: "var(--ledger-muted)",
                 marginBottom: 10,
               }}
             >
@@ -4574,7 +4576,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                     textTransform: "none",
                     letterSpacing: 0,
                     marginLeft: 8,
-                    color: "#A69C82",
+                    color: "var(--ledger-text-tertiary)",
                   }}
                 >
                   {fmtMoney(yearCategoryYearTotal)} total
@@ -4602,7 +4604,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                 ))}
               </div>
             ) : (
-              <div style={{ fontSize: 12.5, color: "#74836A" }}>
+              <div style={{ fontSize: 12.5, color: "var(--ledger-muted)" }}>
                 No {yearCategoryEntryType} entries for {activeCategoryLabel} in {year}.
               </div>
             )}
@@ -4676,7 +4678,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
               >
                 Paste bank statement CSV
               </div>
-              <div style={{ fontSize: 13, color: "#74836A", marginBottom: 14 }}>
+              <div style={{ fontSize: 13, color: "var(--ledger-muted)", marginBottom: 14 }}>
                 Copy rows from your bank&apos;s CSV export (including the header row)
                 and paste them below. You&apos;ll map columns on the next step, same as
                 for a file upload.
@@ -4738,7 +4740,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
               >
                 Map statement columns
               </div>
-              <div style={{ fontSize: 13, color: "#74836A", marginBottom: 16 }}>
+              <div style={{ fontSize: 13, color: "var(--ledger-muted)", marginBottom: 16 }}>
                 {statementImport.fileName} &mdash; {statementImport.rows.length} rows
                 {statementImport.mappingRemembered && (
                   <span style={{ color: "#2F6B4F", fontWeight: 600 }}>
@@ -4754,7 +4756,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                       style={{
                         fontSize: 11,
                         fontWeight: 600,
-                        color: "#74836A",
+                        color: "var(--ledger-muted)",
                         textTransform: "uppercase",
                         letterSpacing: "0.06em",
                         display: "block",
@@ -4789,7 +4791,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                   style={{
                     fontSize: 11,
                     fontWeight: 600,
-                    color: "#74836A",
+                    color: "var(--ledger-muted)",
                     textTransform: "uppercase",
                     letterSpacing: "0.06em",
                     display: "block",
@@ -4817,7 +4819,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                   <div
                     style={{
                       fontSize: 12,
-                      color: "#74836A",
+                      color: "var(--ledger-muted)",
                       marginTop: 8,
                       lineHeight: 1.6,
                     }}
@@ -4833,7 +4835,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                 )}
               </div>
 
-              <div style={{ fontSize: 12, color: "#74836A", marginTop: 14 }}>
+              <div style={{ fontSize: 12, color: "var(--ledger-muted)", marginTop: 14 }}>
                 Debits become expenses; credits become income. Category rules apply
                 automatically.
               </div>
@@ -4888,7 +4890,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                   ? "Review statement import"
                   : "Review import"}
               </div>
-              <div style={{ fontSize: 13, color: "#74836A", marginBottom: 12 }}>
+              <div style={{ fontSize: 13, color: "var(--ledger-muted)", marginBottom: 12 }}>
                 {importPreview.fileName} &mdash; {importPreviewStats.total} record
                 {importPreviewStats.total === 1 ? "" : "s"} found,{" "}
                 {importPreviewStats.included} selected, {importPreviewStats.importable} ready
@@ -4913,7 +4915,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                     marginBottom: 12,
                   }}
                 >
-                  <label style={{ fontSize: 12, color: "#74836A", fontWeight: 600 }}>
+                  <label style={{ fontSize: 12, color: "var(--ledger-muted)", fontWeight: 600 }}>
                     Assign to account:
                   </label>
                   <select
@@ -4945,7 +4947,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                   <label
                     style={{
                       fontSize: 12,
-                      color: "#74836A",
+                      color: "var(--ledger-muted)",
                       fontWeight: 600,
                     }}
                   >
@@ -4963,7 +4965,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                       </option>
                     ))}
                   </select>
-                  <span style={{ fontSize: 12, color: "#74836A" }}>
+                  <span style={{ fontSize: 12, color: "var(--ledger-muted)" }}>
                     Change if dates or duplicate checks look wrong
                   </span>
                 </div>
@@ -5008,14 +5010,14 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                   </div>
                   <div
                     style={{
-                      border: "1px solid #D8CDB4",
+                      border: "1px solid var(--ledger-border)",
                       borderRadius: 6,
                       overflow: "auto",
                       marginBottom: 12,
                       flex: 1,
                       minHeight: 240,
                       maxHeight: "52vh",
-                      background: "#FFFDF8",
+                      background: "var(--ledger-surface)",
                     }}
                   >
                     <table className="import-preview-table">
@@ -5070,7 +5072,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                                   <div
                                     style={{
                                       fontSize: 10,
-                                      color: "#74836A",
+                                      color: "var(--ledger-muted)",
                                       marginTop: 3,
                                     }}
                                   >
@@ -5299,15 +5301,15 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
               >
                 Import complete
               </div>
-              <div style={{ fontSize: 13, color: "#74836A", marginBottom: 16 }}>
+              <div style={{ fontSize: 13, color: "var(--ledger-muted)", marginBottom: 16 }}>
                 {importConfirm.fileName}
               </div>
 
               <div
                 style={{
-                  border: "1px solid #D8CDB4",
+                  border: "1px solid var(--ledger-border)",
                   borderRadius: 6,
-                  background: "#FFFDF8",
+                  background: "var(--ledger-surface)",
                   padding: "14px 16px",
                   marginBottom: 16,
                   fontSize: 13,
@@ -5344,7 +5346,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                 )}
 
                 {importConfirm.stats.total - importConfirm.stats.included > 0 && (
-                  <div style={{ color: "#74836A" }}>
+                  <div style={{ color: "var(--ledger-muted)" }}>
                     {importConfirm.stats.total - importConfirm.stats.included} row
                     {importConfirm.stats.total - importConfirm.stats.included === 1
                       ? ""
@@ -5353,7 +5355,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                   </div>
                 )}
                 {importConfirm.attemptedCount > importConfirm.mergedCount && (
-                  <div style={{ color: "#74836A" }}>
+                  <div style={{ color: "var(--ledger-muted)" }}>
                     {importConfirm.attemptedCount - importConfirm.mergedCount} duplicate
                     {importConfirm.attemptedCount - importConfirm.mergedCount === 1
                       ? ""
@@ -5391,7 +5393,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                     style={{
                       fontSize: 11,
                       fontWeight: 600,
-                      color: "#74836A",
+                      color: "var(--ledger-muted)",
                       textTransform: "uppercase",
                       letterSpacing: "0.06em",
                       display: "block",
@@ -5413,7 +5415,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                       )
                     }
                   />
-                  <div style={{ fontSize: 12, color: "#74836A", marginTop: 6 }}>
+                  <div style={{ fontSize: 12, color: "var(--ledger-muted)", marginTop: 6 }}>
                     Optional label applied to all {importConfirm.mergedCount} imported
                     entr{importConfirm.mergedCount === 1 ? "y" : "ies"}. Searchable in the
                     ledger.
@@ -5477,7 +5479,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                         fontWeight: 600,
                         letterSpacing: "0.1em",
                         textTransform: "uppercase",
-                        color: "#74836A",
+                        color: "var(--ledger-muted)",
                         marginBottom: 10,
                       }}
                     >
@@ -5517,7 +5519,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                         fontWeight: 600,
                         letterSpacing: "0.1em",
                         textTransform: "uppercase",
-                        color: "#74836A",
+                        color: "var(--ledger-muted)",
                         marginBottom: 10,
                       }}
                     >
@@ -5558,7 +5560,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                         fontWeight: 600,
                         letterSpacing: "0.1em",
                         textTransform: "uppercase",
-                        color: "#74836A",
+                        color: "var(--ledger-muted)",
                         marginBottom: 10,
                       }}
                     >
@@ -5592,7 +5594,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                       fontWeight: 600,
                       letterSpacing: "0.1em",
                       textTransform: "uppercase",
-                      color: "#74836A",
+                      color: "var(--ledger-muted)",
                       marginBottom: 10,
                     }}
                   >
@@ -5604,7 +5606,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                           textTransform: "none",
                           letterSpacing: 0,
                           marginLeft: 8,
-                          color: "#A69C82",
+                          color: "var(--ledger-text-tertiary)",
                         }}
                       >
                         avg/mo across active months
@@ -5675,7 +5677,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                       fontWeight: 600,
                       letterSpacing: "0.1em",
                       textTransform: "uppercase",
-                      color: "#74836A",
+                      color: "var(--ledger-muted)",
                       marginBottom: 10,
                     }}
                   >
@@ -5687,7 +5689,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                           textTransform: "none",
                           letterSpacing: 0,
                           marginLeft: 8,
-                          color: "#A69C82",
+                          color: "var(--ledger-text-tertiary)",
                         }}
                       >
                         avg/mo across active months
@@ -5759,7 +5761,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                       fontWeight: 600,
                       letterSpacing: "0.1em",
                       textTransform: "uppercase",
-                      color: "#74836A",
+                      color: "var(--ledger-muted)",
                       marginBottom: 10,
                     }}
                   >
@@ -5771,7 +5773,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                           textTransform: "none",
                           letterSpacing: 0,
                           marginLeft: 8,
-                          color: "#A69C82",
+                          color: "var(--ledger-text-tertiary)",
                         }}
                       >
                         avg/mo across active months
@@ -5827,13 +5829,13 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
             onToggle={() => setShowDriveBackup((v) => !v)}
           >
             {!userHasGoogleProvider(user) ? (
-              <div style={{ fontSize: 13.5, color: "#74836A", lineHeight: 1.55 }}>
+              <div style={{ fontSize: 13.5, color: "var(--ledger-muted)", lineHeight: 1.55 }}>
                 Scheduled Drive backup requires signing in with Google. Email/password
                 accounts can still use local Backup / Restore from Actions.
               </div>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-                <div style={{ fontSize: 12.5, color: "#74836A", lineHeight: 1.5 }}>
+                <div style={{ fontSize: 12.5, color: "var(--ledger-muted)", lineHeight: 1.5 }}>
                   Scheduled backups run while this app is open (not in the background).
                   Daily means once per calendar day; weekly means once per week (Mon–Sun).
                 </div>
@@ -5843,7 +5845,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                     alignItems: "center",
                     gap: 10,
                     fontSize: 13.5,
-                    color: "#1F2A22",
+                    color: "var(--ledger-text)",
                     cursor: driveBackupBusy ? "wait" : "pointer",
                   }}
                 >
@@ -5866,7 +5868,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                     style={{
                       fontSize: 11,
                       fontWeight: 600,
-                      color: "#74836A",
+                      color: "var(--ledger-muted)",
                       textTransform: "uppercase",
                       letterSpacing: "0.06em",
                       display: "block",
@@ -5894,7 +5896,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                     ))}
                   </select>
                 </div>
-                <div style={{ fontSize: 13, color: "#74836A", lineHeight: 1.55 }}>
+                <div style={{ fontSize: 13, color: "var(--ledger-muted)", lineHeight: 1.55 }}>
                   Backups are saved to <strong>Expense Book Backups</strong> in Google Drive.
                   <div style={{ marginTop: 6 }}>
                     Last backup: {formatLastBackup(backupSchedule.lastBackupAt)}
@@ -5938,7 +5940,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
             open={showCategoryRules}
             onToggle={() => setShowCategoryRules((v) => !v)}
           >
-            <div style={{ fontSize: 12.5, color: "#74836A", marginBottom: 12, lineHeight: 1.45 }}>
+            <div style={{ fontSize: 12.5, color: "var(--ledger-muted)", marginBottom: 12, lineHeight: 1.45 }}>
               Rules are saved when you manually pick a category. They help auto-categorize
               future imports with similar descriptions.
             </div>
@@ -5988,15 +5990,15 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
               </button>
             </div>
             {categoryRuleList.length === 0 ? (
-              <div style={{ fontSize: 13, color: "#74836A" }}>
+              <div style={{ fontSize: 13, color: "var(--ledger-muted)" }}>
                 No rules match your search.
               </div>
             ) : (
               <div
                 style={{
-                  border: "1px solid #D8CDB4",
+                  border: "1px solid var(--ledger-border)",
                   borderRadius: 8,
-                  background: "#FFFDF8",
+                  background: "var(--ledger-surface)",
                   overflow: "hidden",
                   maxHeight: 280,
                   overflowY: "auto",
@@ -6010,14 +6012,14 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                       alignItems: "center",
                       gap: 12,
                       padding: "10px 16px",
-                      borderTop: i === 0 ? "none" : "1px dashed #E4DCC5",
+                      borderTop: i === 0 ? "none" : "1px dashed var(--ledger-border-light)",
                       fontSize: 13,
                     }}
                   >
                     <div
                       style={{
                         flex: 1,
-                        color: "#1F2A22",
+                        color: "var(--ledger-text)",
                         minWidth: 0,
                         overflow: "hidden",
                         textOverflow: "ellipsis",
@@ -6027,7 +6029,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
                     >
                       {rule.pattern}
                     </div>
-                    <div style={{ color: "#74836A", fontSize: 12, flexShrink: 0 }}>
+                    <div style={{ color: "var(--ledger-muted)", fontSize: 12, flexShrink: 0 }}>
                       {rule.type} &rarr; {rule.label}
                     </div>
                     <button
@@ -6051,7 +6053,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
               </div>
             )}
             {categoryRuleSearch && categoryRuleList.length < categoryRuleCount && (
-              <div style={{ fontSize: 12, color: "#74836A", marginTop: 8 }}>
+              <div style={{ fontSize: 12, color: "var(--ledger-muted)", marginTop: 8 }}>
                 Showing {categoryRuleList.length} of {categoryRuleCount} rules
               </div>
             )}

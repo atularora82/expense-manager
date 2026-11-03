@@ -10,7 +10,7 @@ import {
 const fieldLabel = {
   fontSize: 11,
   fontWeight: 600,
-  color: "#74836A",
+  color: "var(--ledger-muted)",
   textTransform: "uppercase",
   letterSpacing: "0.06em",
   display: "block",
@@ -92,27 +92,27 @@ export default function SplitTransactionModal({
         >
           Split transaction
         </div>
-        <div style={{ fontSize: 13, color: "#74836A", marginBottom: 16, lineHeight: 1.5 }}>
+        <div style={{ fontSize: 13, color: "var(--ledger-muted)", marginBottom: 16, lineHeight: 1.5 }}>
           Divide <strong>{fmtMoney(totalAmount)}</strong> across categories. Useful for mixed
           grocery trips (food vs household supplies).
         </div>
 
         <div
           style={{
-            border: "1px solid #D8CDB4",
+            border: "1px solid var(--ledger-border)",
             borderRadius: 6,
-            background: "#F6F1E6",
+            background: "var(--ledger-bg)",
             padding: "12px 14px",
             marginBottom: 16,
             fontSize: 13,
           }}
         >
-          <div style={{ fontWeight: 600, color: "#1F2A22" }}>
+          <div style={{ fontWeight: 600, color: "var(--ledger-text)" }}>
             {entry.description.includes(" — ")
               ? entry.description.split(" — ")[0]
               : entry.description}
           </div>
-          <div style={{ color: "#74836A", marginTop: 4 }}>
+          <div style={{ color: "var(--ledger-muted)", marginTop: 4 }}>
             {fmtDateFull(entry.date)} · {fmtMoney(totalAmount)}
           </div>
         </div>
