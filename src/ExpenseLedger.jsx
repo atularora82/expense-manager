@@ -91,6 +91,13 @@ import {
 import { buildPeriodReport } from "./periodReport.js";
 import PeriodReportModal from "./PeriodReportModal.jsx";
 import SavingsGoalsPanel from "./SavingsGoalsPanel.jsx";
+import {
+  createFamilyMember,
+  createFinancialRecord,
+  emptyFamilyFinanceRegistry,
+  normalizeFamilyFinanceRegistry,
+} from "./familyFinance.js";
+import FamilyFinancePanel from "./FamilyFinancePanel.jsx";
 import AccountsPanel from "./AccountsPanel.jsx";
 import MonthlyAllocationPanel from "./MonthlyAllocationPanel.jsx";
 import MonthlyBudgetSection from "./MonthlyBudgetSection.jsx";
@@ -483,6 +490,9 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
   const [savingsGoals, setSavingsGoals] = useState([]);
   const [savingsGoalsLoaded, setSavingsGoalsLoaded] = useState(false);
 
+  const [familyFinance, setFamilyFinance] = useState(emptyFamilyFinanceRegistry);
+  const [familyFinanceLoaded, setFamilyFinanceLoaded] = useState(false);
+
   const [recurring, setRecurring] = useState([]);
   const [recurringLoaded, setRecurringLoaded] = useState(false);
   const [categoryRules, setCategoryRules] = useState({});
@@ -603,6 +613,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
         accountsResult,
         goalsResult,
         budgetSettingsResult,
+        familyFinanceResult,
       ] = await Promise.all([
         readKey("ledger-entries"),
         readKey("ledger-budgets"),
@@ -613,6 +624,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
         readKey("ledger-accounts"),
         readKey("ledger-savings-goals"),
         readKey(BUDGET_SETTINGS_KEY),
+        readKey("ledger-family-finance"),
       ]);
 
       if (cancelled) return;
@@ -630,6 +642,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
         setAccountsLoaded(true);
         setSavingsGoalsLoaded(true);
         setBudgetSettingsLoaded(true);
+        setFamilyFinanceLoaded(true);
         return;
       }
 
@@ -668,6 +681,11 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
       if (budgetSettingsResult.ok && budgetSettingsResult.value) {
         setBudgetSettings(normalizeBudgetSettings(parseStoredJson(budgetSettingsResult.value, {})));
       }
+      if (familyFinanceResult.ok && familyFinanceResult.value) {
+        setFamilyFinance(
+          normalizeFamilyFinanceRegistry(parseStoredJson(familyFinanceResult.value, {}))
+        );
+      }
 
       setLoaded(true);
       setBudgetsLoaded(true);
@@ -678,6 +696,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
       setAccountsLoaded(true);
       setSavingsGoalsLoaded(true);
       setBudgetSettingsLoaded(true);
+      setFamilyFinanceLoaded(true);
       setStorageHydrated(true);
     })();
 
@@ -753,6 +772,17 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
       }
     })();
   }, [savingsGoals, savingsGoalsLoaded]);
+
+  useEffect(() => {
+    if (!storageHydrated || !familyFinanceLoaded) return;
+    (async () => {
+      try {
+        await window.storage.set("ledger-family-finance", JSON.stringify(familyFinance));
+      } catch (e) {
+        // ignore
+      }
+    })();
+  }, [familyFinance, familyFinanceLoaded]);
 
   useEffect(() => {
     if (!storageHydrated || !recurringLoaded) return;
@@ -2392,6 +2422,55 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
     setSavingsGoals((prev) => prev.filter((g) => g.id !== id));
   }
 
+  function addFamilyMember(name) {
+    const member = createFamilyMember(name);
+    if (!member) return false;
+    setFamilyFinance((prev) => ({
+      ...prev,
+      members: [...prev.members, member],
+    }));
+    return true;
+  }
+
+  function removeFamilyMember(id) {
+    setFamilyFinance((prev) => ({
+      members: prev.members.filter((m) => m.id !== id),
+      records: prev.records.filter((r) => r.memberId !== id),
+    }));
+  }
+
+  function addFamilyFinanceRecord(payload) {
+    const record = createFinancialRecord(payload);
+    if (!record) return false;
+    setFamilyFinance((prev) => ({
+      ...prev,
+      records: [...prev.records, record],
+    }));
+    return true;
+  }
+
+  function updateFamilyFinanceRecord(id, patch) {
+    setFamilyFinance((prev) => ({
+      ...prev,
+      records: prev.records.map((r) =>
+        r.id === id
+          ? {
+              ...r,
+              ...patch,
+              updatedAt: new Date().toISOString(),
+            }
+          : r
+      ),
+    }));
+  }
+
+  function removeFamilyFinanceRecord(id) {
+    setFamilyFinance((prev) => ({
+      ...prev,
+      records: prev.records.filter((r) => r.id !== id),
+    }));
+  }
+
   function openPeriodReport() {
     setPeriodReport(
       buildPeriodReport({
@@ -2526,6 +2605,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
       categoryRules,
       accounts,
       savingsGoals,
+      familyFinance,
     });
   }
 
@@ -2652,6 +2732,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
       setCategoryRules(data.categoryRules);
       setAccounts(normalizeAccounts(data.accounts));
       setSavingsGoals(normalizeSavingsGoals(data.savingsGoals));
+      setFamilyFinance(normalizeFamilyFinanceRegistry(data.familyFinance));
       setBackupNote(
         `Restored backup from ${data.exportedAt ? data.exportedAt.slice(0, 10) : "file"} (${data.entries.length} entries${data.appVersion ? `, app v${data.appVersion}` : ""}).`
       );
@@ -3071,7 +3152,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
         @media (max-width: 720px) {
           .lg-grid { grid-template-columns: 1fr !important; }
           .lg-header { flex-direction: column !important; align-items: flex-start !important; gap: 16px !important; }
-          .goals-form-grid, .accounts-form-grid { grid-template-columns: 1fr !important; }
+          .goals-form-grid, .accounts-form-grid, .family-finance-form-grid { grid-template-columns: 1fr !important; }
         }
         .ledger-sticky-bar {
           position: sticky;
@@ -5813,6 +5894,38 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
           )}
 
           </>
+        )}
+
+        {activeTab === "family" && !globalSearchActive && (
+          <div
+            style={{
+              background: "var(--ledger-surface)",
+              border: "1px solid var(--ledger-border)",
+              borderRadius: 8,
+              padding: "18px 20px 22px",
+              marginBottom: 28,
+            }}
+          >
+            <div
+              style={{
+                fontFamily: "'Fraunces', serif",
+                fontSize: 20,
+                fontWeight: 600,
+                color: "var(--ledger-text)",
+                marginBottom: 4,
+              }}
+            >
+              Family financial registry
+            </div>
+            <FamilyFinancePanel
+              registry={familyFinance}
+              onAddMember={addFamilyMember}
+              onRemoveMember={removeFamilyMember}
+              onAddRecord={addFamilyFinanceRecord}
+              onUpdateRecord={updateFamilyFinanceRecord}
+              onRemoveRecord={removeFamilyFinanceRecord}
+            />
+          </div>
         )}
 
         {activeTab === "settings" && !globalSearchActive && (

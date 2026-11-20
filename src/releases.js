@@ -3,6 +3,17 @@
  */
 export const RELEASE_HISTORY = [
   {
+    version: "1.2.0",
+    date: "2026-11-20",
+    summary: "Family asset & liability registry",
+    changes: [
+      "New Family assets tab to record holdings per household member",
+      "Track banks, FDs, investments, insurance, property, and loans in one place",
+      "Assets, liabilities, and net worth summary with value snapshots",
+      "Family finance data included in backup / restore and cloud sync",
+    ],
+  },
+  {
     version: "1.1.0",
     date: "2025-11-03",
     summary: "Categories, income detection, and version tracking",

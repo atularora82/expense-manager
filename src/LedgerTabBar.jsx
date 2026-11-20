@@ -4,6 +4,7 @@ export const LEDGER_TABS = [
   { id: "overview", label: "Overview" },
   { id: "transactions", label: "Transactions" },
   { id: "plan", label: "Plan" },
+  { id: "family", label: "Family assets" },
   { id: "settings", label: "Settings" },
 ];
 

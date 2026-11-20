@@ -1,6 +1,7 @@
 import { APP_VERSION } from "./version.js";
+import { emptyFamilyFinanceRegistry } from "./familyFinance.js";
 
-export const BACKUP_VERSION = 2;
+export const BACKUP_VERSION = 3;
 
 export function createBackup({
   entries,
@@ -9,6 +10,7 @@ export function createBackup({
   categoryRules,
   accounts = [],
   savingsGoals = [],
+  familyFinance = emptyFamilyFinanceRegistry(),
 }) {
   return {
     version: BACKUP_VERSION,
@@ -20,6 +22,7 @@ export function createBackup({
     categoryRules,
     accounts,
     savingsGoals,
+    familyFinance,
   };
 }
 
@@ -44,6 +47,10 @@ export function parseBackupFile(text) {
         : {},
     accounts: Array.isArray(data.accounts) ? data.accounts : [],
     savingsGoals: Array.isArray(data.savingsGoals) ? data.savingsGoals : [],
+    familyFinance:
+      data.familyFinance && typeof data.familyFinance === "object"
+        ? data.familyFinance
+        : emptyFamilyFinanceRegistry(),
   };
 }
 

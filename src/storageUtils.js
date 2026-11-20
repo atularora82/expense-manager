@@ -22,6 +22,14 @@ export function isEmptyStoredValue(key, value) {
     ) {
       return typeof parsed === "object" && parsed !== null && Object.keys(parsed).length === 0;
     }
+    if (key === "ledger-family-finance") {
+      return (
+        typeof parsed === "object" &&
+        parsed !== null &&
+        (!Array.isArray(parsed.members) || parsed.members.length === 0) &&
+        (!Array.isArray(parsed.records) || parsed.records.length === 0)
+      );
+    }
   } catch {
     return true;
   }
