@@ -3463,6 +3463,13 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
           style={{ display: "none" }}
           onChange={handleImportFile}
         />
+        <input
+          ref={backupInputRef}
+          type="file"
+          accept=".json,application/json"
+          style={{ display: "none" }}
+          onChange={handleRestoreBackup}
+        />
 
         {activeTab === "transactions" && (
           <>
@@ -4372,13 +4379,6 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
               ))}
             </select>
           )}
-          <input
-            ref={backupInputRef}
-            type="file"
-            accept=".json,application/json"
-            style={{ display: "none" }}
-            onChange={handleRestoreBackup}
-          />
           {hiddenEntryCount > 0 && (
             <label
               style={{
