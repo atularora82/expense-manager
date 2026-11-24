@@ -145,3 +145,56 @@ export function memberLabel(registry, memberId) {
   const member = registry.members.find((m) => m.id === memberId);
   return member ? member.name : null;
 }
+
+export const HOUSEHOLD_VIEW_ID = "__household__";
+
+export const FINANCE_RECORD_BUCKETS = [
+  { id: "cash_bank", label: "Cash & bank" },
+  { id: "investments", label: "Investments" },
+  { id: "insurance_property", label: "Insurance & property" },
+  { id: "loans_credit", label: "Loans & credit" },
+];
+
+const TYPE_TO_BUCKET = {
+  bank: "cash_bank",
+  fixed_deposit: "cash_bank",
+  mutual_fund: "investments",
+  stocks: "investments",
+  ppf_epf: "investments",
+  gold: "investments",
+  other_asset: "investments",
+  insurance: "insurance_property",
+  property: "insurance_property",
+  home_loan: "loans_credit",
+  personal_loan: "loans_credit",
+  credit_card: "loans_credit",
+  other_liability: "loans_credit",
+};
+
+export function recordBucketId(type) {
+  return TYPE_TO_BUCKET[type] || "investments";
+}
+
+export function groupRecordsByBucket(records) {
+  const groups = Object.fromEntries(FINANCE_RECORD_BUCKETS.map((b) => [b.id, []]));
+  for (const record of records) {
+    const bucketId = recordBucketId(record.type);
+    groups[bucketId].push(record);
+  }
+  for (const bucket of FINANCE_RECORD_BUCKETS) {
+    groups[bucket.id].sort((a, b) => a.title.localeCompare(b.title));
+  }
+  return groups;
+}
+
+export function summarizeBucketRecords(records) {
+  let assets = 0;
+  let liabilities = 0;
+  for (const record of records) {
+    const typeInfo = financeRecordTypeMap[record.type];
+    const amount = Math.abs(Number(record.value) || 0);
+    if (typeInfo?.side === "liability") liabilities += amount;
+    else assets += amount;
+  }
+  return { assets, liabilities, net: assets - liabilities, count: records.length };
+}
