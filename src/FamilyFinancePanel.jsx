@@ -9,6 +9,7 @@ import {
   summarizeBucketRecords,
   summarizeFamilyFinance,
 } from "./familyFinance.js";
+import FamilyFinanceBulkImport from "./FamilyFinanceBulkImport.jsx";
 
 function fmtMoney(n) {
   const sign = n < 0 ? "-" : "";
@@ -313,12 +314,14 @@ export default function FamilyFinancePanel({
   onAddRecord,
   onUpdateRecord,
   onRemoveRecord,
+  onBulkImportRegistry,
 }) {
   const [memberName, setMemberName] = useState("");
   const [viewMemberId, setViewMemberId] = useState(null);
 
   const [showManageMembers, setShowManageMembers] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
+  const [showBulkUpload, setShowBulkUpload] = useState(false);
 
   const [formMemberId, setFormMemberId] = useState("");
 
@@ -667,6 +670,33 @@ export default function FamilyFinancePanel({
           </form>
         </div>
       )}
+
+      <div style={{ marginBottom: 16 }}>
+        <CollapseHeader
+          title="Bulk upload"
+          meta="Import or export family holdings from CSV / Excel"
+          open={showBulkUpload}
+          onToggle={() => setShowBulkUpload((v) => !v)}
+        />
+        {showBulkUpload && (
+          <div
+            style={{
+              border: "1px solid var(--ledger-border)",
+              borderTop: "none",
+              borderRadius: "0 0 6px 6px",
+              padding: "14px 16px",
+              marginBottom: 8,
+            }}
+          >
+            <FamilyFinanceBulkImport
+              registry={registry}
+              onImportComplete={(nextRegistry, stats) => {
+                onBulkImportRegistry(nextRegistry, stats);
+              }}
+            />
+          </div>
+        )}
+      </div>
 
       <div className="family-members-collapse">
         <CollapseHeader

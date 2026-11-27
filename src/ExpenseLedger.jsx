@@ -2471,6 +2471,10 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
     }));
   }
 
+  function bulkImportFamilyFinanceRegistry(nextRegistry) {
+    setFamilyFinance(normalizeFamilyFinanceRegistry(nextRegistry));
+  }
+
   function openPeriodReport() {
     setPeriodReport(
       buildPeriodReport({
@@ -5924,6 +5928,7 @@ export default function ExpenseLedger({ user, cloudSync = false, onSignOut }) {
               onAddRecord={addFamilyFinanceRecord}
               onUpdateRecord={updateFamilyFinanceRecord}
               onRemoveRecord={removeFamilyFinanceRecord}
+              onBulkImportRegistry={bulkImportFamilyFinanceRegistry}
             />
           </div>
         )}
